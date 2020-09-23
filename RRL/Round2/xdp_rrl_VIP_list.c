@@ -1,12 +1,3 @@
-/*
- *  rrl-per-ip
- *  Implements a semi fine grained udp_dns_reply RRL per ip address within a time frame
- *  Jun 2020 - Tom Carpay, Willem Toorop
- */
-
-/*
- *  Includes
- */
 #include <stdint.h>
 #include <linux/bpf.h>
 #include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
@@ -18,19 +9,10 @@
 #include <linux/udp.h>      /* for struct udphdr   */
 #include <string.h>         /* for memcpy()        */
 
-/*
- *  Begin defines
- */
 #define DNS_PORT      53
 
-// 1000000000 nanoseconds is 1 second
 #define FRAME_SIZE 	  1000000000
-
-// QPS before RRL hits in
-#define THRESHOLD  	  1000
-/*
- *  End defines
- */
+#define THRESHOLD  	  2
 
 /*
  *  Store the time frame
@@ -53,6 +35,31 @@ struct bpf_map_def SEC("maps") state_map_v6 = {
 	.value_size = sizeof(struct bucket),
 	.max_entries = 1000000
 };
+
+struct bpf_map_def SEC("maps") exclude_v4_prefixes = {
+	.type = BPF_MAP_TYPE_LPM_TRIE,
+	.key_size = sizeof(struct bpf_lpm_trie_key) + sizeof(uint32_t),
+	.value_size = sizeof(uint64_t),
+	.max_entries = 10000
+};
+
+struct bpf_map_def SEC("maps") exclude_v6_prefixes = {
+	.type = BPF_MAP_TYPE_LPM_TRIE,
+	.key_size = sizeof(struct bpf_lpm_trie_key) + 8, // first 64 bits
+	.value_size = sizeof(uint64_t),
+	.max_entries = 10000
+};
+
+
+/** Copied from the kernel module of the base03-map-counter example of the
+ ** XDP Hands-On Tutorial (see https://github.com/xdp-project/xdp-tutorial )
+ *
+ * LLVM maps __sync_fetch_and_add() as a built-in function to the BPF atomic add
+ * instruction (that is BPF_STX | BPF_XADD | BPF_W for word sizes)
+ */
+#ifndef lock_xadd
+#define lock_xadd(ptr, val)	((void) __sync_fetch_and_add(ptr, val))
+#endif
 
 /*
  *  Store the VLAN header
@@ -193,11 +200,11 @@ int do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
 		b->n_packets = 0;
 	}
 
-	// less QPS than the threshold? Then pass.
 	if (b->n_packets < THRESHOLD)
 		return 1;
 
-	// save the old header values for checksum update later on
+	//bpf_printk("bounce\n");
+	//save the old header values
 	uint16_t old_val = dns->flags.as_value;
 
 	// change the DNS flags
@@ -212,7 +219,7 @@ int do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
 	// calculate and write the new checksum
 	update_checksum(&udp->check, old_val, dns->flags.as_value);
 
-	// return as response
+	// bounce
 	return 0;
 }
 
@@ -227,11 +234,26 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 {
 	struct udphdr  *udp;
 	struct dnshdr  *dns;
+	struct {
+		uint32_t prefixlen;
+		uint32_t ipv4_addr;
+	} key4;
 
 	// check that we have a DNS packet
 	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
 	||  !(dns = parse_dnshdr(c)))
 		return 1;
+
+	// search for the prefix in the LPM trie
+	key4.prefixlen = 32;
+	key4.ipv4_addr = key;
+	uint64_t *count = bpf_map_lookup_elem(&exclude_v4_prefixes, &key4);
+
+	// if the prefix matches, we exclude it from rate limiting
+	if (count) {
+		lock_xadd(count, 1);
+		return 1; // XDP_PASS
+	}
 
 	// get the rrl bucket from the map by IPv4 address
 	struct bucket *b = bpf_map_lookup_elem(&state_map, &key);
@@ -240,14 +262,14 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 	if (b)
 		return do_rate_limit(udp, dns, b);
 
-	// create new starting bucket for this IPv4 address
+	// create new starting bucket for this key
 	struct bucket new_bucket;
 	new_bucket.start_time = bpf_ktime_get_ns();
 	new_bucket.n_packets = 0;
 
 	// store the bucket and pass the packet
 	bpf_map_update_elem(&state_map, &key, &new_bucket, BPF_ANY);
-	return 1;
+	return 1; // XDP_PASS
 }
 
 /*
@@ -261,16 +283,30 @@ int udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
 {
  	struct udphdr  *udp;
  	struct dnshdr  *dns;
+	struct {
+		uint32_t        prefixlen;
+		struct in6_addr ipv6_addr;
+	} key6;
 
  	// check that we have a DNS packet
  	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
  	||  !(dns = parse_dnshdr(c)))
  		return 1;
 
- 	// get the starting time frame from the map
+	// search for the prefix in the LPM trie
+	key6.prefixlen = 64;
+	key6.ipv6_addr = *key;
+	uint64_t *count = bpf_map_lookup_elem(&exclude_v6_prefixes, &key6);
+
+	// if the prefix is matches, we exclude it from rate limiting
+	if (count) {
+		lock_xadd(count, 1);
+		return 1; // XDP_PASS
+	}
+ 	// get the rrl bucket from the map by IPv6 address
  	struct bucket *b = bpf_map_lookup_elem(&state_map_v6, key);
 
- 	// the bucket must exist
+ 	// did we see this IPv6 address before?
 	if (b)
 		return do_rate_limit(udp, dns, b);
 
@@ -289,8 +325,8 @@ int udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
  *  Recieve and parse request
  *  @var struct xdp_md
  */
-SEC("xdp-rrl-per-ip")
-int xdp_rrl_per_ip(struct xdp_md *ctx)
+SEC("xdp-rrl-VIP-list")
+int xdp_rrl_VIP_list(struct xdp_md *ctx)
 {
 	// store variables
 	struct cursor   c;
@@ -311,7 +347,6 @@ int xdp_rrl_per_ip(struct xdp_md *ctx)
 		if (!(ipv4 = parse_iphdr(&c))
 		||    ipv4->protocol != IPPROTO_UDP
 		||   (r = udp_dns_reply_v4(&c, ipv4->saddr))) {
-			
 			return r < 0 ? XDP_ABORTED : XDP_PASS;
 		}
 
@@ -319,7 +354,7 @@ int xdp_rrl_per_ip(struct xdp_md *ctx)
 		ipv4->daddr = ipv4->saddr;
 		ipv4->saddr = swap_ipv4;
 
-	} 
+	}
 	else if (eth_proto == __bpf_htons(ETH_P_IPV6))
 	{
 		if (!(ipv6 = parse_ipv6hdr(&c))
@@ -340,8 +375,6 @@ int xdp_rrl_per_ip(struct xdp_md *ctx)
 	memcpy(swap_eth, eth->h_dest, ETH_ALEN);
 	memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
 	memcpy(eth->h_source, swap_eth, ETH_ALEN);
-
-	// Bounce
 
 	// bounce the request
 	return XDP_TX;
