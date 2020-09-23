@@ -23,7 +23,10 @@
  */
 #define DNS_PORT      53
 
+// 1000000000 nanoseconds is 1 second
 #define FRAME_SIZE 	  1000000000
+
+// QPS before RRL hits in
 #define THRESHOLD  	  1000
 /*
  *  End defines
@@ -185,18 +188,16 @@ int do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
 	// make sure the elapsed time is set and not outside of the frame
 	if (b->start_time == 0 || elapsed >= FRAME_SIZE)
 	{
-		//bpf_printk("New timeframe\n");
 		// start new time frame
 		b->start_time = now;
 		b->n_packets = 0;
 	}
 
-	// @TODO refine bounce rate to fit curve
+	// less QPS than the threshold? Then pass.
 	if (b->n_packets < THRESHOLD)
 		return 1;
 
-	//bpf_printk("bounce\n");
-	//save the old header values
+	// save the old header values for checksum update later on
 	uint16_t old_val = dns->flags.as_value;
 
 	// change the DNS flags
@@ -211,7 +212,7 @@ int do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
 	// calculate and write the new checksum
 	update_checksum(&udp->check, old_val, dns->flags.as_value);
 
-	// bounce
+	// return as response
 	return 0;
 }
 
@@ -232,14 +233,14 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 	||  !(dns = parse_dnshdr(c)))
 		return 1;
 
-	// get the starting time frame from the map
+	// get the rrl bucket from the map by IPv4 address
 	struct bucket *b = bpf_map_lookup_elem(&state_map, &key);
 
-	// the bucket must exist
+	// did we see this IPv4 address before?
 	if (b)
 		return do_rate_limit(udp, dns, b);
 
-	// create new starting bucket for this key
+	// create new starting bucket for this IPv4 address
 	struct bucket new_bucket;
 	new_bucket.start_time = bpf_ktime_get_ns();
 	new_bucket.n_packets = 0;
