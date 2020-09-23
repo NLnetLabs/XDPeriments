@@ -24,7 +24,7 @@
 #define DNS_PORT      53
 
 #define FRAME_SIZE 	  1000000000
-#define THRESHOLD  	  1
+#define THRESHOLD  	  1000
 /*
  *  End defines
  */
@@ -42,6 +42,13 @@ struct bpf_map_def SEC("maps") state_map = {
 	.key_size = sizeof(uint32_t),
 	.value_size = sizeof(struct bucket),
 	.max_entries = 100
+};
+
+struct bpf_map_def SEC("maps") state_map_v6 = {
+	.type = BPF_MAP_TYPE_PERCPU_HASH,
+	.key_size = sizeof(struct in6_addr),
+	.value_size = sizeof(struct bucket),
+	.max_entries = 100 
 };
 
 /*
@@ -165,6 +172,49 @@ void update_checksum(uint16_t *csum, uint16_t old_val, uint16_t new_val)
 	*csum = (uint16_t)~new_csum_comp;
 }
 
+static __always_inline
+int do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
+{
+	// increment number of packets
+	b->n_packets++;
+
+	// get the current and elapsed time
+	uint64_t now = bpf_ktime_get_ns();
+	uint64_t elapsed = now - b->start_time;
+
+	// make sure the elapsed time is set and not outside of the frame
+	if (b->start_time == 0 || elapsed >= FRAME_SIZE)
+	{
+		//bpf_printk("New timeframe\n");
+		// start new time frame
+		b->start_time = now;
+		b->n_packets = 0;
+	}
+
+	// @TODO refine bounce rate to fit curve
+	if (b->n_packets < THRESHOLD)
+		return 1;
+
+	//bpf_printk("bounce\n");
+	//save the old header values
+	uint16_t old_val = dns->flags.as_value;
+
+	// change the DNS flags
+	dns->flags.as_bits_and_pieces.ad = 0;
+	dns->flags.as_bits_and_pieces.qr = 1;
+	dns->flags.as_bits_and_pieces.tc = 1;
+
+	// change the UDP destination to the source
+	udp->dest   = udp->source;
+	udp->source = __bpf_htons(DNS_PORT);
+
+	// calculate and write the new checksum
+	update_checksum(&udp->check, old_val, dns->flags.as_value);
+
+	// bounce
+	return 0;
+}
+
 /*
  * Parse DNS ipv4 message
  * Returns 1 if message needs to go through (i.e. pass)
@@ -186,61 +236,17 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 	struct bucket *b = bpf_map_lookup_elem(&state_map, &key);
 
 	// the bucket must exist
-	if (!b)
-	{
-		// create new starting bucket for this key
-		struct bucket new_bucket;
-		new_bucket.start_time = bpf_ktime_get_ns();
-		new_bucket.n_packets = 0;
+	if (b)
+		return do_rate_limit(udp, dns, b);
 
-		// store the bucket and pass the packet
-		bpf_map_update_elem(&state_map, &key, &new_bucket, BPF_ANY);
-		return 1;
-	}
+	// create new starting bucket for this key
+	struct bucket new_bucket;
+	new_bucket.start_time = bpf_ktime_get_ns();
+	new_bucket.n_packets = 0;
 
-	// increment number of packets
-	b->n_packets++;
-
-	// get the current and elapsed time
-	uint64_t now = bpf_ktime_get_ns();
-	uint64_t elapsed = now - b->start_time;
-
-	// make sure the elapsed time is set and not outside of the frame
-	if (b->start_time == 0 || elapsed >= FRAME_SIZE)
-	{
-		//bpf_printk("New timeframe\n");
-		// start new time frame
-		b->start_time = now;
-		b->n_packets = 0;
-	}
-
-	// @TODO refine bounce rate to fit curve
-	if (b->n_packets > THRESHOLD)
-	{
-		//bpf_printk("bounce\n");
-		//save the old header values
-		uint16_t old_val = dns->flags.as_value;
-
-		// change the DNS flags
-		dns->flags.as_bits_and_pieces.ad = 0;
-		dns->flags.as_bits_and_pieces.qr = 1;
-		dns->flags.as_bits_and_pieces.tc = 1;
-
-		// change the UDP destination to the source
-		udp->dest   = udp->source;
-		udp->source = __bpf_htons(DNS_PORT);
-
-		// calculate and write the new checksum
-		update_checksum(&udp->check, old_val, dns->flags.as_value);
-
-		// bounce
-		return 0;
-	}
-	else
-	{
-		// pass
-		return 1;
-	}
+	// store the bucket and pass the packet
+	bpf_map_update_elem(&state_map, &key, &new_bucket, BPF_ANY);
+	return 1;
 }
 
 /*
@@ -250,82 +256,32 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
  *         0 if (modified) message needs to be replied
  */
 static __always_inline
-int udp_dns_reply_v6(struct cursor *c)
+int udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
 {
+ 	struct udphdr  *udp;
+ 	struct dnshdr  *dns;
+
+ 	// check that we have a DNS packet
+ 	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
+ 	||  !(dns = parse_dnshdr(c)))
+ 		return 1;
+
+ 	// get the starting time frame from the map
+ 	struct bucket *b = bpf_map_lookup_elem(&state_map_v6, key);
+
+ 	// the bucket must exist
+	if (b)
+		return do_rate_limit(udp, dns, b);
+
+	// create new starting bucket for this key
+	struct bucket new_bucket;
+	new_bucket.start_time = bpf_ktime_get_ns();
+	new_bucket.n_packets = 0;
+
+	// store the bucket and pass the packet
+	bpf_map_update_elem(&state_map_v6, key, &new_bucket, BPF_ANY);
 	return 1;
 }
-// {
-// 	struct udphdr  *udp;
-// 	struct dnshdr  *dns;
-
-// 	// check that we have a DNS packet
-// 	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
-// 	||  !(dns = parse_dnshdr(c)))
-// 		return 1;
-
-// 	// get the starting time frame from the map
-// 	struct bucket *b = bpf_map_lookup_elem(&state_map, &key);
-
-// 	// the bucket must exist
-// 	if (!b)
-// 	{
-// 		//bpf_printk("!FRAME \n");
-// 		return -1;
-// 	}
-
-// 	// increment number of packets
-// 	b->n_packets++;
-
-
-// 	// @TODO evaluate this option for frame timing
-// 	// look at the timing every 100 packets
-// 	// if (b->n_packets % 100 == 0)
-
-// 	// look at the timing of the packet a percentage of the time
-// 	if (bpf_get_prandom_u32() % 100 < 50)
-// 	{
-// 		// get the current and elapsed time
-// 		uint64_t now = bpf_ktime_get_ns();
-// 		uint64_t elapsed = now - b->start_time;
-
-// 		// make sure the elapsed time is set and not outside of the frame
-// 		if (b->start_time == 0 || elapsed >= FRAME_SIZE)
-// 		{
-// 			//bpf_printk("New timeframe\n");
-// 			// start new time frame
-// 			b->start_time = now;
-// 			b->n_packets = 0;
-// 		}
-// 	}
-
-// 	// @TODO refine bounce rate to fit curve
-// 	if (b->n_packets > THRESHOLD)
-// 	{
-// 		//bpf_printk("bounce\n");
-// 		//save the old header values
-// 		uint16_t old_val = dns->flags.as_value;
-
-// 		// change the DNS flags
-// 		dns->flags.as_bits_and_pieces.ad = 0;
-// 		dns->flags.as_bits_and_pieces.qr = 1;
-// 		dns->flags.as_bits_and_pieces.tc = 1;
-
-// 		// change the UDP destination to the source
-// 		udp->dest   = udp->source;
-// 		udp->source = __bpf_htons(DNS_PORT);
-
-// 		// calculate and write the new checksum
-// 		update_checksum(&udp->check, old_val, dns->flags.as_value);
-
-// 		// bounce
-// 		return 0;
-// 	}
-// 	else
-// 	{
-// 		// pass
-// 		return 1;
-// 	}
-// }
 
 
 /*
@@ -367,7 +323,7 @@ int xdp_rrl_per_ip(struct xdp_md *ctx)
 	{
 		if (!(ipv6 = parse_ipv6hdr(&c))
 		||    ipv6->nexthdr  != IPPROTO_UDP
-		||   (r = udp_dns_reply_v6(&c)))
+		||   (r = udp_dns_reply_v6(&c, &ipv6->saddr)))
 			return r < 0 ? XDP_ABORTED : XDP_PASS;
 
 		struct in6_addr swap_ipv6 = ipv6->daddr;
@@ -391,4 +347,3 @@ int xdp_rrl_per_ip(struct xdp_md *ctx)
 }
 
 char __license[] SEC("license") = "GPL";
-
