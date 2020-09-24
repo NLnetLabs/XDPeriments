@@ -19,7 +19,7 @@ sudo mount -t bpf none /sys/fs/bpf
 ## sizeof(uint64_t) = 8
 
 sudo bpftool map create /sys/fs/bpf/rrl_exclude_v4_prefixes flags 1 \
-	name exclude_v4_prefixes type lpm_trie key 8 value 8 entries 10000
+	name bloe type lpm_trie key 8 value 8 entries 10000
 
 # add 185.49.142.0/24
 sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
@@ -42,7 +42,7 @@ sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
 ## sizeof(uint64_t) = 8
 
 sudo bpftool map create /sys/fs/bpf/rrl_exclude_v6_prefixes flags 1 \
-	name exclude_v6_prefixes type lpm_trie key 12 value 8 entries 10000
+	name bla type lpm_trie key 12 value 8 entries 10000
 
 # add 2a04:b900::/22
 sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v6_prefixes \

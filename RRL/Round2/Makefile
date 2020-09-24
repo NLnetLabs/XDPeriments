@@ -1,7 +1,7 @@
 CC=clang
 CFLAGS=-O2 -Wall -Werror -I ../../libbpf/src
 
-DEV=eth0
+DEV=lo
 
 XDP_PROG=xdp_rrl_VIP_list.o
 

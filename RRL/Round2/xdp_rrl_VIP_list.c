@@ -234,10 +234,6 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 {
 	struct udphdr  *udp;
 	struct dnshdr  *dns;
-	struct {
-		uint32_t prefixlen;
-		uint32_t ipv4_addr;
-	} key4;
 
 	// check that we have a DNS packet
 	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
@@ -245,8 +241,13 @@ int udp_dns_reply_v4(struct cursor *c, uint32_t key)
 		return 1;
 
 	// search for the prefix in the LPM trie
-	key4.prefixlen = 32;
-	key4.ipv4_addr = key;
+	struct {
+		uint32_t prefixlen;
+		uint32_t ipv4_addr;
+	} key4 = {
+		.prefixlen = 32,
+		.ipv4_addr = key
+	};
 	uint64_t *count = bpf_map_lookup_elem(&exclude_v4_prefixes, &key4);
 
 	// if the prefix matches, we exclude it from rate limiting
@@ -283,10 +284,6 @@ int udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
 {
  	struct udphdr  *udp;
  	struct dnshdr  *dns;
-	struct {
-		uint32_t        prefixlen;
-		struct in6_addr ipv6_addr;
-	} key6;
 
  	// check that we have a DNS packet
  	if (!(udp = parse_udphdr(c)) || udp->dest != __bpf_htons(DNS_PORT)
@@ -294,8 +291,13 @@ int udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
  		return 1;
 
 	// search for the prefix in the LPM trie
-	key6.prefixlen = 64;
-	key6.ipv6_addr = *key;
+	struct {
+		uint32_t        prefixlen;
+		struct in6_addr ipv6_addr;
+	} key6 = {
+		.prefixlen = 64,
+		.ipv6_addr = *key
+	};
 	uint64_t *count = bpf_map_lookup_elem(&exclude_v6_prefixes, &key6);
 
 	// if the prefix is matches, we exclude it from rate limiting
