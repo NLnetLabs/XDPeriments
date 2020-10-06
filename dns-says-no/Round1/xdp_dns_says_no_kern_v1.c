@@ -30,14 +30,20 @@
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include <stdint.h>
+
 #include <linux/bpf.h>
 #include <linux/if_ether.h> /* for struct ethhdr   */
 #include <linux/ip.h>       /* for struct iphdr    */
 #include <linux/ipv6.h>     /* for struct ipv6hdr  */
 #include <linux/in.h>       /* for IPPROTO_UDP     */
 #include <linux/udp.h>      /* for struct udphdr   */
-#include <string.h>         /* for memcpy() */
+
+// do not use libc includes because this causes clang 
+// to include 32bit headers on 64bit ( only ) systems.
+typedef __u8 uint8_t;
+typedef __u16 uint16_t;
+typedef __u32 uint32_t;
+#define memcpy __builtin_memcpy
 
 #define DNS_PORT      53
 #define RCODE_REFUSED  5
