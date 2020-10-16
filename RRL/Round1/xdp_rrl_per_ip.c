@@ -7,16 +7,22 @@
 /*
  *  Includes
  */
-#include <stdint.h>
 #include <linux/bpf.h>
-#include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
-#include <bpf_endian.h>     /* for __bpf_htons()   */
 #include <linux/if_ether.h> /* for struct ethhdr   */
 #include <linux/ip.h>       /* for struct iphdr    */
 #include <linux/ipv6.h>     /* for struct ipv6hdr  */
 #include <linux/in.h>       /* for IPPROTO_UDP     */
 #include <linux/udp.h>      /* for struct udphdr   */
-#include <string.h>         /* for memcpy()        */
+#include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
+#include <bpf_endian.h>     /* for __bpf_htons()   */
+
+// do not use libc includes because this causes clang
+// to include 32bit headers on 64bit ( only ) systems.
+typedef __u8 uint8_t;
+typedef __u16 uint16_t;
+typedef __u32 uint32_t;
+typedef __u32 uint64_t;
+#define memcpy __builtin_memcpy
 
 /*
  *  Begin defines
