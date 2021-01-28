@@ -14,7 +14,7 @@ xdp_rrl_vipctl: xdp_rrl_vipctl.c
 	$(CC) -static $(CFLAGS) -o $@ $< -L../../libbpf/src -lbpf -lelf -lz
 
 clean:
-	rm -f $(XDP_PROG)
+	rm -f $(XDP_PROG) xdp_rrl_vipctl
 
 dump: $(XDP_PROG)
 	llvm-objdump -S $(XDP_PROG)
