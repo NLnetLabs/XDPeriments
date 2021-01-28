@@ -5,10 +5,13 @@ DEV=eth0
 
 XDP_PROG=xdp_rrl.o
 
-all: $(XDP_PROG)
+all: $(XDP_PROG) xdp_rrl_vipctl
 
 $(XDP_PROG): xdp_rrl.c
 	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
+
+xdp_rrl_vipctl: xdp_rrl_vipctl.c
+	$(CC) -static $(CFLAGS) -o $@ $< -L../../libbpf/src -lbpf -lelf -lz
 
 clean:
 	rm -f $(XDP_PROG)

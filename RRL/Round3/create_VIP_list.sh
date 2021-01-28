@@ -19,15 +19,15 @@ sudo mount -t bpf none /sys/fs/bpf
 ## sizeof(uint64_t) = 8
 
 sudo bpftool map create /sys/fs/bpf/rrl_exclude_v4_prefixes flags 1 \
-	name bloe type lpm_trie key 8 value 8 entries 10000
+	name exclude_v4_prefixes type lpm_trie key 8 value 8 entries 10000
 
 # add 185.49.142.0/24
-sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
-	key 24 0 0 0 185 49 142 0 value 0 0 0 0 0 0 0 0
+# sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
+# 	key 24 0 0 0 185 49 142 0 value 0 0 0 0 0 0 0 0
 
 # add 80.114.156.98
-sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
-	key 24 0 0 0 80 114 156 98 value 0 0 0 0 0 0 0 0
+# sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
+# 	key 32 0 0 0 80 114 156 98 value 0 0 0 0 0 0 0 0
 
 ## create pinned map for:
 #
@@ -42,9 +42,9 @@ sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
 ## sizeof(uint64_t) = 8
 
 sudo bpftool map create /sys/fs/bpf/rrl_exclude_v6_prefixes flags 1 \
-	name bla type lpm_trie key 12 value 8 entries 10000
+	name exclude_v6_prefixes type lpm_trie key 12 value 8 entries 10000
 
-# add 2a04:b900::/22
-sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v6_prefixes \
-	key hex 16 00 00 00 2a 04 b9 00 00 00 00 00 value 0 0 0 0 0 0 0 0
+# add 2a04:b900::/29
+#sudo bpftool map update pinned /sys/fs/bpf/rrl_exclude_v6_prefixes \
+#	key hex 1d 00 00 00 2a 04 b9 00 00 00 00 00 value 0 0 0 0 0 0 0 0
 
