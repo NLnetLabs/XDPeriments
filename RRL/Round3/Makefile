@@ -35,9 +35,9 @@ sys_fs_bpf_mounted:
 	sudo bpftool map create /sys/fs/bpf/rrl_exclude_v6_prefixes flags 1 \
 	             name exclude_v6_prefixes type lpm_trie key 12 value 8 entries 10000
 
-maps: /sys/fs/bpf/rrl_exclude_v4_prefixes /sys/fs/bpf/rrl_exclude_v6_prefixes
+vip_maps: /sys/fs/bpf/rrl_exclude_v4_prefixes /sys/fs/bpf/rrl_exclude_v6_prefixes
 
-load: $(XDP_PROG) maps
+load: $(XDP_PROG) vip_maps
 	sudo bpftool prog load $(XDP_PROG) /sys/fs/bpf/rrl type xdp \
 		map name exclude_v4_prefixes \
 		pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
