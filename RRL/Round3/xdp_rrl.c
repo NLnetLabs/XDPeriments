@@ -571,7 +571,7 @@ udp_dns_reply_v6(struct cursor *c, struct in6_addr *key)
 	new_bucket.n_packets = 0;
 
 	// store the bucket and pass the packet
-	bpf_map_update_elem(&state_map_v6, key, &new_bucket, BPF_ANY);
+	bpf_map_update_elem(&state_map_v6, &key6.ipv6_addr, &new_bucket, BPF_ANY);
 	return XDP_PASS;
 }
 
