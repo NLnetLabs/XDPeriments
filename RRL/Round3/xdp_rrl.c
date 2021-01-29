@@ -15,6 +15,14 @@
  * use more memory, and reduce the chance of hash collisions.
  */
 
+#define RRL_IPv4_PREFIX_LEN  24
+/* IPv4 prefix length. Addresses are grouped by netblock.
+ */
+
+#define RRL_IPv6_PREFIX_LEN  48
+/* IPv6 prefix length. Addresses are grouped by netblock.
+ */
+
 #define RRL_RATELIMIT       200
 /* The max qps allowed (from one query source). If set to 0 then it is disabled
  * (unlimited rate). Once the rate limit is reached, responses will be dropped.
@@ -30,14 +38,6 @@
  * sending of SLIP packets, 1 means every query will get a SLIP response.
  * Default is 2, cuts traffic in half and legit users have a fair chance to get
  * a +TC response.
- */
-
-#define RRL_IPv4_PREFIX_LEN  24
-/* IPv4 prefix length. Addresses are grouped by netblock.
- */
-
-#define RRL_IPv6_PREFIX_LEN  48
-/* IPv6 prefix length. Addresses are grouped by netblock.
  */
 
 
