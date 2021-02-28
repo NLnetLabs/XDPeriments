@@ -440,7 +440,7 @@ struct ethhdr *parse_eth(struct cursor *c, uint16_t *eth_proto)
 }
 
 static  inline
-uint8_t *parse_dname(struct cursor *c, uint8_t *pkt)
+uint8_t *skip_dname(struct cursor *c)
 {
         uint8_t *dname = c->pos;
 	uint8_t i;
@@ -453,20 +453,13 @@ uint8_t *parse_dname(struct cursor *c, uint8_t *pkt)
 
                 o = *(uint8_t *)c->pos;
                 if ((o & 0xC0) == 0xC0) {
-                        /* Compression label, Only back references! */
-                        if ((o | 0x3F) >= (dname - pkt))
-                                return 0;
-
                         /* Compression label is last label of dname. */
-                        c->pos += 1;
-                        break;
+                        c->pos += 2;
+                        return dname;
 
-                } else if (o & 0xC0)
+                } else if (o > 63 || c->pos + o + 1 > c->end)
                         /* Unknown label type */
                         return 0;
-
-		if (c->pos + o + 1 > c->end)
-			return 0;
 
                 c->pos += o + 1;
                 if (!o)
@@ -844,7 +837,7 @@ int xdp_dns_cookies(struct xdp_md *ctx)
 		||  dns->qdcount != __bpf_htons(1)
 		||  dns->ancount || dns->nscount
 		||  dns->arcount >  __bpf_htons(2)
-		||  !parse_dname(&c, (void *)dns)
+		||  !skip_dname(&c)
 		||  !parse_dns_qrr(&c))
 			return XDP_ABORTED; // Return FORMERR?
 
@@ -886,7 +879,7 @@ int xdp_dns_cookies(struct xdp_md *ctx)
 		||  dns->qdcount != __bpf_htons(1)
 		||  dns->ancount || dns->nscount
 		||  dns->arcount >  __bpf_htons(2)
-		||  !parse_dname(&c, (void *)dns)
+		||  !skip_dname(&c)
 		||  !parse_dns_qrr(&c))
 			return XDP_ABORTED; // return FORMERR?
 
