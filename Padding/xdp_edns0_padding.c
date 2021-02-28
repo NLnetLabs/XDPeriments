@@ -17,7 +17,7 @@
 #include "bpf_edns0_padding.h"
 #include "bpf-dns.h"
 
-#define MAX_NUM_OPTIONS    6 
+#define MAX_NUM_OPTIONS    6
 #define MAX_OPTION_LEN  1500
 
 SEC("xdp-edns0-padding-ingress")
@@ -92,7 +92,8 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 				bpf_printk("IPv6 padding option found\n");
 				return XDP_PASS;
 			}
-			if (opt_len > MAX_OPTION_LEN || opt_len > rdata_len
+			if (opt_len > rdata_len
+			||  opt_len > MAX_OPTION_LEN
 			||  c.pos + opt_len > c.end)
 				return XDP_PASS;
 
@@ -153,7 +154,8 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 				bpf_printk("IPv4 padding option found\n");
 				return XDP_PASS;
 			}
-			if (opt_len > MAX_OPTION_LEN || opt_len > rdata_len
+			if (opt_len > rdata_len
+			||  opt_len > MAX_OPTION_LEN
 			||  c.pos + opt_len > c.end)
 				return XDP_PASS;
 

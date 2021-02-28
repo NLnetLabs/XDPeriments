@@ -181,11 +181,7 @@ uint8_t *skip_dname(struct cursor *c)
                         c->pos += 2;
 			return dname;
 
-                } else if (o & 0xC0)
-                        /* Unknown label type */
-                        return 0;
-
-		if (c->pos + o + 1 > c->end)
+                } else if (o > 63 || c->pos + o + 1 > c->end)
 			return 0;
 
                 c->pos += o + 1;
