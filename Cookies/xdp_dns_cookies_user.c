@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR: table " JMP_TBL " not found\n");
 
 	else bpf_object__for_each_program(prog, obj) {
-		xdp_program_name = bpf_program__title(prog, false);
+		xdp_program_name = bpf_program__section_name(prog);
 		
 		fd = bpf_program__fd(prog);
 		printf(JMP_TBL " entry: %d -> %s\n", key, xdp_program_name);

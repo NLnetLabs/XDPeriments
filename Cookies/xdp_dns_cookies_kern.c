@@ -56,6 +56,11 @@
  * a +TC response.
  */
 
+#ifdef  DEBUG
+#define DEBUG_PRINTK(...) bpf_printk(__VA_ARGS__)
+#else
+#define DEBUG_PRINTK(...)
+#endif
 
 #include <linux/bpf.h>
 #include <linux/if_ether.h> /* for struct ethhdr   */
@@ -65,7 +70,6 @@
 #include <linux/udp.h>      /* for struct udphdr   */
 #include <bpf_helpers.h>
 #include <bpf_endian.h>
-
 
 // do not use libc includes because this causes clang
 // to include 32bit headers on 64bit ( only ) systems.
@@ -175,7 +179,6 @@ struct meta_data {
 #else
 # error "Fix your compiler's __BYTE_ORDER__?!"
 #endif
-
 #define RRL_MASK33           RRL_MASK1
 #define RRL_MASK34           RRL_MASK2
 #define RRL_MASK35           RRL_MASK3
@@ -207,7 +210,6 @@ struct meta_data {
 #define RRL_MASK61           RRL_MASK29
 #define RRL_MASK62           RRL_MASK30
 #define RRL_MASK63           RRL_MASK31
-
 #define RRL_MASK65           RRL_MASK1
 #define RRL_MASK66           RRL_MASK2
 #define RRL_MASK67           RRL_MASK3
@@ -239,7 +241,6 @@ struct meta_data {
 #define RRL_MASK93           RRL_MASK29
 #define RRL_MASK94           RRL_MASK30
 #define RRL_MASK95           RRL_MASK31
-
 #define RRL_MASK97           RRL_MASK1
 #define RRL_MASK98           RRL_MASK2
 #define RRL_MASK99           RRL_MASK3
@@ -514,7 +515,6 @@ do_rate_limit(struct udphdr *udp, struct dnshdr *dns, struct bucket *b)
 	if (b->n_packets % RRL_SLIP)
 		return XDP_DROP;
 # endif
-	//bpf_printk("bounce\n");
 	//save the old header values
 	uint16_t old_val = dns->flags.as_value;
 
@@ -546,7 +546,7 @@ int xdp_do_rate_limit_ipv6(struct xdp_md *ctx)
 	struct udphdr    *udp;
 	struct dnshdr    *dns;
 
-	bpf_printk("xdp_do_rate_limit_ipv6\n");
+	DEBUG_PRINTK("xdp_do_rate_limit_ipv6\n");
 
 	cursor_init(&c, ctx);
 	if ((void *)(md + 1) > c.pos || md->ip_pos > 24)
@@ -609,7 +609,7 @@ int xdp_do_rate_limit_ipv4(struct xdp_md *ctx)
 	struct udphdr    *udp;
 	struct dnshdr    *dns;
 
-	bpf_printk("xdp_do_rate_limit_ipv4\n");
+	DEBUG_PRINTK("xdp_do_rate_limit_ipv4\n");
 
 	cursor_init(&c, ctx);
 	if ((void *)(md + 1) > c.pos || md->ip_pos > 24)
@@ -695,13 +695,13 @@ int xdp_cookie_verify_ipv6(struct xdp_md *ctx)
 				/* Cookie match!
 				 * Packet may go staight up to the DNS service
 				 */
-				bpf_printk("IPv6 valid cookie\n");
+				DEBUG_PRINTK("IPv6 valid cookie\n");
 				return XDP_PASS;
 			}
 			/* Just a client cookie or a bad cookie
 			 * break to go to rate limiting
 			 */
-			bpf_printk("IPv6 bad cookie\n");
+			DEBUG_PRINTK("IPv6 bad cookie\n");
 			break;
 		}
 		if (opt_len > 1500 || opt_len > rdata_len
@@ -767,13 +767,13 @@ int xdp_cookie_verify_ipv4(struct xdp_md *ctx)
 				/* Cookie match!
 				 * Packet may go staight up to the DNS service
 				 */
-				bpf_printk("IPv4 valid cookie\n");
+				DEBUG_PRINTK("IPv4 valid cookie\n");
 				return XDP_PASS;
 			}
 			/* Just a client cookie or a bad cookie
 			 * break to go to rate limiting
 			 */
-			bpf_printk("IPv4 bad cookie\n");
+			DEBUG_PRINTK("IPv4 bad cookie\n");
 			break;
 		}
 		if (opt_len > 1500 || opt_len > rdata_len
