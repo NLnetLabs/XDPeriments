@@ -12,3 +12,5 @@ make
 ```
 
 (Substitute "Cookies" for another program if desirable)
+
+Then use (and change where nesecary) the different `make` commands to interact with the bpf programs.
