@@ -39,7 +39,7 @@
 /* IPv6 prefix length. Addresses are grouped by netblock.
  */
 
-#define RRL_RATELIMIT       200
+#define RRL_RATELIMIT       10 //FIXME setting to 0 breaks because THRESHOLD will be 0
 /* The max qps allowed (from one query source). If set to 0 then it is disabled
  * (unlimited rate). Once the rate limit is reached, responses will be dropped.
  * However, one in every RRL_SLIP number of responses is allowed, with the TC
@@ -48,7 +48,7 @@
  * you set RRL_SLIP to 10, traffic is reduced to 1/10th.
  */
 
-#define RRL_SLIP              2
+#define RRL_SLIP              2 //FIXME setting to 0 makes the compiler complain about update_checksum() being unused
 /* This option controls the number of packets discarded before we send back a
  * SLIP response (a response with "truncated" bit set to one). 0 disables the
  * sending of SLIP packets, 1 means every query will get a SLIP response.
@@ -85,13 +85,15 @@ struct bpf_map_def SEC("maps") jmp_table = {
         .type = BPF_MAP_TYPE_PROG_ARRAY,
         .key_size = sizeof(uint32_t),
         .value_size = sizeof(uint32_t),
-        .max_entries = 5
+        .max_entries = 7
 };
 
 #define DO_RATE_LIMIT_IPV6 0
 #define DO_RATE_LIMIT_IPV4 1
 #define COOKIE_VERIFY_IPv6 2
 #define COOKIE_VERIFY_IPv4 3
+#define STATS_IPv6 4
+#define STATS_IPv4 5
 
 struct meta_data {
 	uint16_t eth_proto;
@@ -311,6 +313,44 @@ struct bpf_map_def SEC("maps") state_map_v6 = {
 	.max_entries = RRL_SIZE
 };
 
+
+/*
+ *  Keep stats
+ */
+struct stats_qtype {
+    uint32_t A;
+    uint32_t AAAA;
+    uint32_t other;
+};
+struct stats_qsize {
+    uint32_t lt50;
+    uint32_t lt75;
+    uint32_t lt100;
+    uint32_t lt200;
+    uint32_t lt500;
+    uint32_t lt1000;
+    uint32_t gt1000;
+};
+struct stats {
+    struct stats_qtype qtype;
+    struct stats_qsize qsize;
+};
+
+struct bpf_map_def SEC("maps") stats_v4 = {
+	.type = BPF_MAP_TYPE_LPM_TRIE,
+	.key_size = sizeof(struct bpf_lpm_trie_key) + sizeof(uint32_t),
+	.value_size = sizeof(struct stats),
+	.max_entries = 10000,
+	.map_flags = BPF_F_NO_PREALLOC
+};
+
+struct bpf_map_def SEC("maps") stats_v6 = {
+	.type = BPF_MAP_TYPE_LPM_TRIE,
+	.key_size = sizeof(struct bpf_lpm_trie_key) + 8, // first 64 bits
+	.value_size = sizeof(struct stats),
+	.max_entries = 10000,
+	.map_flags = BPF_F_NO_PREALLOC
+};
 
 /** Copied from the kernel module of the base03-map-counter example of the
  ** XDP Hands-On Tutorial (see https://github.com/xdp-project/xdp-tutorial )
@@ -783,8 +823,115 @@ int xdp_cookie_verify_ipv4(struct xdp_md *ctx)
 		rdata_len -= opt_len;
 		c.pos += opt_len;
 	}
-	bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
+	//bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
+    bpf_tail_call(ctx, &jmp_table, STATS_IPv4);
 	return XDP_PASS;
+}
+
+static __always_inline
+void update_stats(struct udphdr *udp, struct dnshdr *dns, struct dns_qrr *qrr, struct stats *s)
+{
+    if (qrr->qtype == __bpf_htons(1))
+        s->qtype.A++;
+    else if (qrr->qtype == __bpf_htons(28))
+        s->qtype.AAAA++;
+    else {
+        DEBUG_PRINTK("unknown qtype %i", __bpf_ntohs(qrr->qtype));
+        s->qtype.other++;
+    }
+    
+    uint16_t len = __bpf_ntohs(udp->len);
+    DEBUG_PRINTK("len: %i", len);
+    if (len < 50)
+        s->qsize.lt50++;
+    else if (len < 75)
+        s->qsize.lt75++;
+    else if (len < 100)
+        s->qsize.lt100++;
+    else if (len < 200)
+        s->qsize.lt200++;
+    else if (len < 500)
+        s->qsize.lt500++;
+    else if (len < 1000)
+        s->qsize.lt1000++;
+    else
+        s->qsize.gt1000++;
+
+
+	DEBUG_PRINTK("in update_stats");
+    DEBUG_PRINTK("\t A: %i", s->qtype.A);
+	DEBUG_PRINTK("\t AAAA: %i", s->qtype.AAAA);
+	DEBUG_PRINTK("\t other: %i", s->qtype.other);
+	DEBUG_PRINTK("\t size:");
+	DEBUG_PRINTK("\t\t < 50: %i", s->qsize.lt50);
+	DEBUG_PRINTK("\t\t < 75: %i", s->qsize.lt75);
+	DEBUG_PRINTK("\t\t < 100: %i", s->qsize.lt100);
+	DEBUG_PRINTK("\t\t < 200: %i", s->qsize.lt200);
+	DEBUG_PRINTK("\t\t < 500: %i", s->qsize.lt500);
+	DEBUG_PRINTK("\t\t < 1000: %i", s->qsize.lt1000);
+	DEBUG_PRINTK("\t\t => 1000: %i", s->qsize.gt1000);
+
+	//DEBUG_PRINTK("\nlen: %i", __bpf_ntohs(udp->len));
+}
+
+SEC("xdp-stats-ipv6")
+int xdp_stats_ipv6(struct xdp_md *ctx)
+{
+    return 1;
+}
+
+SEC("xdp-stats-ipv4")
+int xdp_stats_ipv4(struct xdp_md *ctx)
+{
+	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
+	struct iphdr     *ipv4;
+	uint32_t          ipv4_addr;
+	struct udphdr    *udp;
+	struct dnshdr    *dns;
+	struct dns_qrr    *qrr;
+	cursor_init(&c, ctx);
+
+	if ((void *)(md + 1) > c.pos || md->ip_pos > 24)
+		return XDP_ABORTED;
+	c.pos += md->ip_pos;
+
+	if (!(ipv4 = parse_iphdr(&c)) || md->opt_pos > 4096
+	||  !(udp = parse_udphdr(&c)) || udp->dest != __bpf_htons(DNS_PORT)
+	||  !(dns = parse_dnshdr(&c))
+	||  !skip_dname(&c)
+	||  !(qrr = parse_dns_qrr(&c)))
+		return XDP_ABORTED;
+
+#if   RRL_IPv4_PREFIX_LEN == 32
+#elif RRL_IPv4_PREFIX_LEN ==  0
+	ipv4_addr = 0;
+#else
+	ipv4_addr = ipv4->saddr & RRL_IPv4_MASK;
+#endif
+    // search for the prefix in the LPM trie
+    struct {
+        uint32_t prefixlen;
+        uint32_t ipv4_addr;
+    } key4 = {
+        .prefixlen = 32,
+        .ipv4_addr = ipv4->saddr
+    };
+    struct stats *s = bpf_map_lookup_elem(&stats_v4, &key4);
+    if (!s) {
+        struct stats new_stats = {{0,0,0}, {0,0,0,0}};
+        s = &new_stats;
+        DEBUG_PRINTK("new stats: %i", new_stats.qtype.A);
+        DEBUG_PRINTK("new stats: %i", s->qtype.A);
+	    bpf_map_update_elem(&stats_v4, &key4, &new_stats, BPF_ANY);
+    } else {
+        DEBUG_PRINTK("existing stats: %i", s->qtype.A);
+    }
+
+    update_stats(udp, dns, qrr, s);
+
+	bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
+    return XDP_PASS;
 }
 
 

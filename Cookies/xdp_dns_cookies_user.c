@@ -12,10 +12,14 @@
 #endif
 #define DEFAULT_IPv4_VIP_PINPATH "/sys/fs/bpf/rrl_exclude_v4_prefixes"
 #define DEFAULT_IPv6_VIP_PINPATH "/sys/fs/bpf/rrl_exclude_v6_prefixes"
+#define DEFAULT_IPv6_STATS_PINPATH "/sys/fs/bpf/stats_v6"
+#define DEFAULT_IPv4_STATS_PINPATH "/sys/fs/bpf/stats_v4"
 
 #define JMP_TBL "jmp_table"
 #define EXCLv4_TBL "exclude_v4_prefixes"
 #define EXCLv6_TBL "exclude_v6_prefixes"
+#define STATS_v6 "stats_v6"
+#define STATS_v4 "stats_v4"
 
 void print_usage(FILE *out, const char *program_name)
 {
@@ -34,6 +38,8 @@ int main(int argc, char *argv[])
 	const char *ifname = DEFAULT_IFACE;
 	const char *exclude_v4_pinpath = DEFAULT_IPv4_VIP_PINPATH;
 	const char *exclude_v6_pinpath = DEFAULT_IPv6_VIP_PINPATH;
+	const char *stats_v4_pinpath = DEFAULT_IPv4_STATS_PINPATH;
+	const char *stats_v6_pinpath = DEFAULT_IPv6_STATS_PINPATH;
 	int opt = -1;
 
 	unsigned int ifindex = 0;
@@ -41,6 +47,8 @@ int main(int argc, char *argv[])
 	struct bpf_object  *obj  = NULL;
 	struct bpf_map *exclude_v4 = NULL;
 	struct bpf_map *exclude_v6 = NULL;
+	struct bpf_map *stats_v6 = NULL;
+	struct bpf_map *stats_v4 = NULL;
 	const char *xdp_program_name = NULL;
 	int fd = -1, jmp_tbl_fd = -1;
 	uint32_t key = 0;
@@ -86,6 +94,20 @@ int main(int argc, char *argv[])
 	else if (bpf_map__set_pin_path(exclude_v6, exclude_v6_pinpath))
 		fprintf(stderr, "ERROR: pinning " EXCLv6_TBL " to \"%s\"\n"
 		              , exclude_v6_pinpath);
+
+
+	else if (!(stats_v4 = bpf_object__find_map_by_name(obj, STATS_v4)))
+		fprintf(stderr, "ERROR: table " STATS_v4 " not found\n");
+
+	else if (bpf_map__set_pin_path(stats_v4, stats_v4_pinpath))
+		fprintf(stderr, "ERROR: pinning " STATS_v4 " to \"%s\"\n"
+		              , stats_v4_pinpath);
+	else if (!(stats_v6 = bpf_object__find_map_by_name(obj, STATS_v6)))
+		fprintf(stderr, "ERROR: table " STATS_v6 " not found\n");
+
+	else if (bpf_map__set_pin_path(stats_v6, stats_v6_pinpath))
+		fprintf(stderr, "ERROR: pinning " STATS_v6 " to \"%s\"\n"
+		              , stats_v6_pinpath);
 
 	else if (bpf_object__load(obj))
 		fprintf(stderr, "ERROR: loading BPF object file failed\n");
