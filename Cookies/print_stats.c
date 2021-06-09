@@ -27,12 +27,26 @@ struct stats {
     struct stats_qsize qsize;
 };
 
-struct key_type {
+struct key6_type {
+	uint32_t prefixlen;
+	uint8_t  ip_addr[40];
+};
+struct key4_type {
 	uint32_t prefixlen;
 	uint8_t  ip_addr[16];
 };
 
-#define PRINT_STAT(metric, key, lname, lval, val) {\
+#define PRINT_STAT6(metric, key, lname, lval, val) {\
+    printf( "%s{subnet=\"%s/%i\", %s=\"%s\"} %i\n",\
+            metric,\
+            inet_ntop( AF_INET6,  &key.ip_addr, ipv6_str, sizeof(ipv6_str)),\
+            key.prefixlen,\
+            #lname,\
+            #lval,\
+            val.lname.lval\
+          );\
+    }
+#define PRINT_STAT4(metric, key, lname, lval, val) {\
     printf( "%s{subnet=\"%s/%i\", %s=\"%s\"} %i\n",\
             metric,\
             inet_ntop( AF_INET,  &key.ip_addr, ipv4_str, sizeof(ipv4_str)),\
@@ -43,29 +57,57 @@ struct key_type {
           );\
     }
 
-int print_stats(int map4_fd) 
+int print_stats(int map6_fd, int map4_fd) 
 {
-	struct key_type key = { 0 };
-	void *keyp = &key, *prev_keyp = NULL;
+	struct key6_type key6 = { 0 };
+	struct key4_type key4 = { 0 };
+	void *keyp = &key6, *prev_keyp = NULL;
+	char ipv6_str[40];
 	char ipv4_str[16];
-	//char ipv6_str[40];
 
+    // Specify the metric types
     printf("# TYPE query_count counter\n");
+
+    // print IPv6 stats
+	while (!bpf_map_get_next_key(map6_fd, prev_keyp, keyp)) {
+        struct stats value = {0};
+
+		bpf_map_lookup_elem(map6_fd, &key6, &value);
+        PRINT_STAT6("query_count", key6, qtype, A, value);
+        PRINT_STAT6("query_count", key6, qtype, AAAA, value);
+        PRINT_STAT6("query_count", key6, qtype, other, value);
+
+        PRINT_STAT6("query_count", key6, qsize, lt50, value);
+        PRINT_STAT6("query_count", key6, qsize, lt75, value);
+        PRINT_STAT6("query_count", key6, qsize, lt100, value);
+        PRINT_STAT6("query_count", key6, qsize, lt200, value);
+        PRINT_STAT6("query_count", key6, qsize, lt500, value);
+        PRINT_STAT6("query_count", key6, qsize, lt1000, value);
+        PRINT_STAT6("query_count", key6, qsize, gt1000, value);
+
+		prev_keyp = keyp;
+	}
+
+    // reset the key for iteration over the v4 stats
+    keyp = &key4;
+    prev_keyp = NULL;
+
+    // print IPv4 stats
 	while (!bpf_map_get_next_key(map4_fd, prev_keyp, keyp)) {
-		struct stats value = {0};
+        struct stats value = {0};
 
+		bpf_map_lookup_elem(map4_fd, &key4, &value);
+        PRINT_STAT4("query_count", key4, qtype, A, value);
+        PRINT_STAT4("query_count", key4, qtype, AAAA, value);
+        PRINT_STAT4("query_count", key4, qtype, other, value);
 
-		bpf_map_lookup_elem(map4_fd, &key, &value);
-        PRINT_STAT("query_count", key, qtype, A, value);
-        PRINT_STAT("query_count", key, qtype, AAAA, value);
-
-        PRINT_STAT("query_count", key, qsize, lt50, value);
-        PRINT_STAT("query_count", key, qsize, lt75, value);
-        PRINT_STAT("query_count", key, qsize, lt100, value);
-        PRINT_STAT("query_count", key, qsize, lt200, value);
-        PRINT_STAT("query_count", key, qsize, lt500, value);
-        PRINT_STAT("query_count", key, qsize, lt1000, value);
-        PRINT_STAT("query_count", key, qsize, gt1000, value);
+        PRINT_STAT4("query_count", key4, qsize, lt50, value);
+        PRINT_STAT4("query_count", key4, qsize, lt75, value);
+        PRINT_STAT4("query_count", key4, qsize, lt100, value);
+        PRINT_STAT4("query_count", key4, qsize, lt200, value);
+        PRINT_STAT4("query_count", key4, qsize, lt500, value);
+        PRINT_STAT4("query_count", key4, qsize, lt1000, value);
+        PRINT_STAT4("query_count", key4, qsize, gt1000, value);
 
 		prev_keyp = keyp;
 	}
@@ -102,7 +144,7 @@ int main(int argc, char **argv)
     else if (info4.type != BPF_MAP_TYPE_LPM_TRIE || info4.key_size != 8)
         fprintf(stderr, "Map \"%s\" had wrong type\n", fn4);
     else
-        print_stats(map4_fd);
+        print_stats(map6_fd, map4_fd);
 
     return EXIT_SUCCESS;
 }

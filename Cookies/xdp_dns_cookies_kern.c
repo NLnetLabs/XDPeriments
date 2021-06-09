@@ -751,7 +751,7 @@ int xdp_cookie_verify_ipv6(struct xdp_md *ctx)
 		rdata_len -= opt_len;
 		c.pos += opt_len;
 	}
-	bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV6);
+    bpf_tail_call(ctx, &jmp_table, STATS_IPv6);
 	return XDP_PASS;
 }
 
@@ -823,7 +823,6 @@ int xdp_cookie_verify_ipv4(struct xdp_md *ctx)
 		rdata_len -= opt_len;
 		c.pos += opt_len;
 	}
-	//bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
     bpf_tail_call(ctx, &jmp_table, STATS_IPv4);
 	return XDP_PASS;
 }
@@ -859,17 +858,17 @@ void update_stats(struct udphdr *udp, struct dnshdr *dns, struct dns_qrr *qrr, s
 
 
 	DEBUG_PRINTK("in update_stats");
-    DEBUG_PRINTK("\t A: %i", s->qtype.A);
-	DEBUG_PRINTK("\t AAAA: %i", s->qtype.AAAA);
-	DEBUG_PRINTK("\t other: %i", s->qtype.other);
-	DEBUG_PRINTK("\t size:");
-	DEBUG_PRINTK("\t\t < 50: %i", s->qsize.lt50);
-	DEBUG_PRINTK("\t\t < 75: %i", s->qsize.lt75);
-	DEBUG_PRINTK("\t\t < 100: %i", s->qsize.lt100);
-	DEBUG_PRINTK("\t\t < 200: %i", s->qsize.lt200);
-	DEBUG_PRINTK("\t\t < 500: %i", s->qsize.lt500);
-	DEBUG_PRINTK("\t\t < 1000: %i", s->qsize.lt1000);
-	DEBUG_PRINTK("\t\t => 1000: %i", s->qsize.gt1000);
+    //DEBUG_PRINTK("\t A: %i", s->qtype.A);
+	//DEBUG_PRINTK("\t AAAA: %i", s->qtype.AAAA);
+	//DEBUG_PRINTK("\t other: %i", s->qtype.other);
+	//DEBUG_PRINTK("\t size:");
+	//DEBUG_PRINTK("\t\t < 50: %i", s->qsize.lt50);
+	//DEBUG_PRINTK("\t\t < 75: %i", s->qsize.lt75);
+	//DEBUG_PRINTK("\t\t < 100: %i", s->qsize.lt100);
+	//DEBUG_PRINTK("\t\t < 200: %i", s->qsize.lt200);
+	//DEBUG_PRINTK("\t\t < 500: %i", s->qsize.lt500);
+	//DEBUG_PRINTK("\t\t < 1000: %i", s->qsize.lt1000);
+	//DEBUG_PRINTK("\t\t => 1000: %i", s->qsize.gt1000);
 
 	//DEBUG_PRINTK("\nlen: %i", __bpf_ntohs(udp->len));
 }
@@ -877,7 +876,76 @@ void update_stats(struct udphdr *udp, struct dnshdr *dns, struct dns_qrr *qrr, s
 SEC("xdp-stats-ipv6")
 int xdp_stats_ipv6(struct xdp_md *ctx)
 {
-    return 1;
+	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
+	struct ipv6hdr   *ipv6;
+	struct in6_addr   ipv6_addr;
+	struct udphdr    *udp;
+	struct dnshdr    *dns;
+	struct dns_qrr    *qrr;
+
+	DEBUG_PRINTK("xdp_stats_ipv6");
+
+	cursor_init(&c, ctx);
+	if ((void *)(md + 1) > c.pos || md->ip_pos > 24)
+		return XDP_ABORTED;
+	c.pos += md->ip_pos;
+
+	if (!(ipv6 = parse_ipv6hdr(&c)) || md->opt_pos > 4096
+	||  !(udp = parse_udphdr(&c)) || udp->dest != __bpf_htons(DNS_PORT)
+	||  !(dns = parse_dnshdr(&c))
+	||  !skip_dname(&c)
+	||  !(qrr = parse_dns_qrr(&c)))
+		return XDP_ABORTED;
+
+	ipv6_addr = ipv6->saddr;
+ 	// get the rrl bucket from the map by IPv6 address
+#if     RRL_IPv6_PREFIX_LEN == 128
+#elif   RRL_IPv6_PREFIX_LEN >   96
+	ipv6_addr.in6_u.u6_addr32[3] &= RRL_IPv6_MASK;
+#else
+	ipv6_addr.in6_u.u6_addr32[3] = 0;
+# if    RRL_IPv6_PREFIX_LEN ==  96
+# elif  RRL_IPv6_PREFIX_LEN >   64
+	ipv6_addr.in6_u.u6_addr32[2] &= RRL_IPv6_MASK;
+# else
+	ipv6_addr.in6_u.u6_addr32[2] = 0;
+#  if   RRL_IPv6_PREFIX_LEN ==  64
+#  elif RRL_IPv6_PREFIX_LEN >   32
+	ipv6_addr.in6_u.u6_addr32[1] &= RRL_IPv6_MASK;
+#  else
+	ipv6_addr.in6_u.u6_addr32[1] = 0;
+#   if  RRL_IPv6_PREFIX_LEN ==   0
+	ipv6_addr.in6_u.u6_addr32[0] = 0;
+#   elif RRL_IPv6_PREFIX_LEN <  32
+	ipv6_addr.in6_u.u6_addr32[0] &= RRL_IPv6_MASK;
+#   endif
+#  endif
+# endif
+#endif
+    struct {
+        uint32_t prefixlen;
+        struct in6_addr ipv6_addr;
+    } key6 = {
+        .prefixlen = 64,
+        .ipv6_addr = ipv6->saddr
+    };
+    DEBUG_PRINTK("pre bpf_map_lookup_elem for v6");
+    struct stats *s = bpf_map_lookup_elem(&stats_v6, &key6);
+    if (!s) {
+        struct stats new_stats = {{0,0,0}, {0,0,0,0}};
+        s = &new_stats;
+        DEBUG_PRINTK("new stats: %i", new_stats.qtype.A);
+        DEBUG_PRINTK("new stats: %i", s->qtype.A);
+	    bpf_map_update_elem(&stats_v6, &key6, &new_stats, BPF_ANY);
+    } else {
+        DEBUG_PRINTK("existing stats: %i", s->qtype.A);
+    }
+
+    update_stats(udp, dns, qrr, s);
+
+	bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV6);
+    return XDP_PASS;
 }
 
 SEC("xdp-stats-ipv4")
@@ -989,7 +1057,8 @@ int xdp_dns_cookies(struct xdp_md *ctx)
 			return XDP_ABORTED; // Return FORMERR?
 
 		if (dns->arcount == 0) {
-			bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV6);
+			//bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV6);
+			bpf_tail_call(ctx, &jmp_table, STATS_IPv6);
 			return XDP_PASS;
 		}
 		if (c.pos + 1 > c.end
@@ -1031,7 +1100,8 @@ int xdp_dns_cookies(struct xdp_md *ctx)
 			return XDP_ABORTED; // return FORMERR?
 
 		if (dns->arcount == 0) {
-			bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
+			//bpf_tail_call(ctx, &jmp_table, DO_RATE_LIMIT_IPV4);
+			bpf_tail_call(ctx, &jmp_table, STATS_IPv4);
 			return XDP_PASS;
 		}
 		if (c.pos + 1 > c.end
