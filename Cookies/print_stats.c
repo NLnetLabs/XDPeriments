@@ -57,6 +57,16 @@ struct key4_type {
           );\
     }
 
+#define PRINT_TC(metric, af, lname, lval, val) {\
+    printf( "%s{af=\"ipv%i\", %s=\"%i\"} %ld\n",\
+            metric,\
+           	af,\
+            lname,\
+            lval,\
+            val\
+          );\
+    }
+
 int print_stats(int map6_fd, int map4_fd) 
 {
 	struct key6_type key6 = { 0 };
@@ -114,6 +124,31 @@ int print_stats(int map6_fd, int map4_fd)
     return 0;
 }
 
+int print_rcodes(int rcodes_fd, uint8_t af) 
+{
+	int i;
+	uint64_t value = 0; 	
+	for (i = 0; i < 16; i++) {
+		bpf_map_lookup_elem(rcodes_fd, &i, &value);
+		if (value > 0)
+			PRINT_TC("rcodes", af, "rcode", i, value); 
+	}
+
+	return 0;
+}
+int print_response_sizes(int response_sizes_fd, uint8_t af) 
+{
+	int i;
+	uint64_t value = 0; 	
+	for (i = 0; i < 4100; i++) {
+		bpf_map_lookup_elem(response_sizes_fd, &i, &value);
+		if (value > 0)
+			PRINT_TC("response_sizes", af, "size", i, value); 
+	}
+
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	char *fn6 = "/sys/fs/bpf/stats_v6";
@@ -143,8 +178,52 @@ int main(int argc, char **argv)
 
     else if (info4.type != BPF_MAP_TYPE_LPM_TRIE || info4.key_size != 8)
         fprintf(stderr, "Map \"%s\" had wrong type\n", fn4);
-    else
+    else {
         print_stats(map6_fd, map4_fd);
+	}
+
+	// egress / TC
+
+	struct bpf_map_info rcodes4;
+	struct bpf_map_info rcodes6;
+	struct bpf_map_info response_sizes4;
+	struct bpf_map_info response_sizes6;
+	char *rcodes_v4_fn = "/sys/fs/bpf/tc/globals/rcodes_v4";
+	char *rcodes_v6_fn = "/sys/fs/bpf/tc/globals/rcodes_v6";
+	char *response_sizes_v4_fn = "/sys/fs/bpf/tc/globals/response_sizes_v4";
+	char *response_sizes_v6_fn = "/sys/fs/bpf/tc/globals/response_sizes_v6";
+
+	uint32_t rcodes_v4_info = sizeof(rcodes4), rcodes_v4_len = sizeof(rcodes4);
+	uint32_t rcodes_v6_info = sizeof(rcodes6), rcodes_v6_len = sizeof(rcodes6);
+	int rcodes_v4_fd, rcodes_v6_fd;
+
+	uint32_t response_sizes_v4_info = sizeof(response_sizes4), response_sizes_v4_len = sizeof(response_sizes4);
+	uint32_t response_sizes_v6_info = sizeof(response_sizes4), response_sizes_v6_len = sizeof(response_sizes6);
+	int response_sizes_v4_fd, response_sizes_v6_fd;
+
+	if ((rcodes_v4_fd = bpf_obj_get(rcodes_v4_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", rcodes_v4_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(rcodes_v4_fd, &rcodes_v4_info, &rcodes_v4_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , rcodes_v4_fn, strerror(errno));
+	else if ((rcodes_v6_fd = bpf_obj_get(rcodes_v6_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", rcodes_v6_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(rcodes_v6_fd, &rcodes_v6_info, &rcodes_v6_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , rcodes_v6_fn, strerror(errno));
+	else if ((response_sizes_v4_fd = bpf_obj_get(response_sizes_v4_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", response_sizes_v4_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(response_sizes_v4_fd, &response_sizes_v4_info, &response_sizes_v4_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , response_sizes_v4_fn, strerror(errno));
+	else if ((response_sizes_v6_fd = bpf_obj_get(response_sizes_v6_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", response_sizes_v6_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(response_sizes_v6_fd, &response_sizes_v6_info, &response_sizes_v6_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , response_sizes_v6_fn, strerror(errno));
+	else {
+		print_rcodes(rcodes_v4_fd, 4);
+		print_rcodes(rcodes_v6_fd, 6);
+		print_response_sizes(response_sizes_v4_fd, 4);
+		print_response_sizes(response_sizes_v6_fd, 6);
+	}
+
 
     return EXIT_SUCCESS;
 }

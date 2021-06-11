@@ -7,10 +7,14 @@ DEV=lo
 CFLAGS=-O3 -Wall -Werror -I../libbpf/src -D'DEFAULT_IFACE="$(DEV)"' -D'DEBUG=1'
 
 XDP_PROG=xdp_dns_cookies_kern.o
+TC_PROG=tc_stats.o
 
-all: $(XDP_PROG) xdp_dns_cookies_user xdp_rrl_vipctl print_stats
+all: $(XDP_PROG) $(TC_PROG) xdp_dns_cookies_user xdp_rrl_vipctl print_stats
 
 $(XDP_PROG): xdp_dns_cookies_kern.c siphash4bpf.c
+	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
+
+$(TC_PROG): tc_stats.c tc_stats.h bpf-dns.h
 	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
 
 xdp_dns_cookies_user: xdp_dns_cookies_user.c
@@ -55,11 +59,25 @@ sys_fs_bpf_mounted:
 vip_maps: /sys/fs/bpf/rrl_exclude_v4_prefixes /sys/fs/bpf/rrl_exclude_v6_prefixes
 stats_maps: /sys/fs/bpf/stats_v4 /sys/fs/bpf/stats_v6 
 
-load: $(XDP_PROG) vip_maps stats_maps
+clsact:
+	sudo /sbin/tc qdisc add dev $(DEV) clsact
+	/usr/bin/touch clsact
+
+
+tc_stats: $(TC_PROG)
+
+
+load: clsact $(XDP_PROG) $(TC_PROG) vip_maps stats_maps
+	sudo /sbin/tc filter del dev $(DEV) egress || true
+	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(TC_PROG) sec tc-stats-egress
 	sudo ./xdp_dns_cookies_user
 
 unload:
 	sudo ip link set dev $(DEV) xdpgeneric off
+	sudo /sbin/tc filter del dev $(DEV) egress || true
+	sudo /sbin/tc qdisc del dev $(DEV) clsact || true
+	rm -f clsact
 
 show:
 	sudo ip link show dev $(DEV)
+	/sbin/tc filter show dev $(DEV) egress
