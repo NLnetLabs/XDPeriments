@@ -161,18 +161,18 @@ void pretty_dname(char* pretty, char* dname)
 int print_dnames(int dnames_fd, uint8_t af)
 {
 	char key[31] = { 0 };
-	char pretty[31] = { 0 };
 	void *keyp = &key, *prev_keyp = NULL;
 	//char dname_str[31];
 	uint64_t count;
-	while (!bpf_map_get_next_key(dnames_fd, prev_keyp, keyp)) {
-		bpf_map_lookup_elem(dnames_fd, &key, &count);
+    while (!bpf_map_get_next_key(dnames_fd, prev_keyp, keyp)) {
+        bpf_map_lookup_elem(dnames_fd, &key, &count);
+        char pretty[31] = { 0 };
         pretty_dname(pretty, key);
-		if (count > 0)
-			printf("dname{af=\"%i\", dname=\"%s\"} %ld\n", af, pretty, count);
+        if (count > 0)
+            printf("dname{af=\"%i\", dname=\"%s\"} %ld\n", af, pretty, count);
 
-		prev_keyp = keyp;
-	}
+        prev_keyp = keyp;
+    }
 
 	return 0;
 
