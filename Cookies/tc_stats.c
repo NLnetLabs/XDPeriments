@@ -97,6 +97,14 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
 }
 */
 
+#define LOAD_DNAME(n) {\
+    if (dname_len >= n) {\
+        bpf_skb_load_bytes(skb, offset, to, n);\
+        offset += n;\
+        to += n;\
+        dname_len -= n;\
+    }\
+                                                            }
 SEC("tc-stats-egress")
 int tc_stats_egress(struct __sk_buff *skb)
 {
@@ -140,37 +148,32 @@ int tc_stats_egress(struct __sk_buff *skb)
 		update_stats(&rcodes_v4, &response_sizes_v4, udp, dns);
         //update_dnames(&dnames_v4, &c, skb);
 
-		void *dname_start =  c.pos;
-		skip_dname(&c);
-		void *dname_end =  c.pos;
+		void *dname_start =  (void *)(long)c.pos;
+		skip_dname(&c); // TODO: try to let skip_dname fill a buffer so we alreayd have the dname
+		void *dname_end =  (void *)(long)c.pos;
 
 		uint32_t dname_len = (uint32_t)(dname_end - dname_start);
+        //uint32_t dname_len = 9;
 
 		bpf_printk("TEST: %s", skb->data + 55);
 		bpf_printk("skb data: %i", skb->data_end - skb->data);
-		char dname[31] = {0};
+		char dname[255] = {0};
+        char * dnameptr = dname;
 
-		bpf_printk("dname len %i", dname_len);
-		// for longer dnames, skip the first part to make sure we capture the last part (with the tld)
-		if (dname_len > 31) {
-			dname_start += dname_len - 31;
-			dname_len = 31;
-		}
-		dname_len &= 31;
-		bpf_printk("dname len & x %i", dname_len);
+        uint32_t offset = (uint32_t)(dname_start - (void *)(long)skb->data);
+        void *to = dnameptr;
+        LOAD_DNAME(128);
+        LOAD_DNAME(64);
+        LOAD_DNAME(32);
+        LOAD_DNAME(16);
+        LOAD_DNAME(8);
+        LOAD_DNAME(4);
+        LOAD_DNAME(2);
+        LOAD_DNAME(1);
 
-        // breaks:
-        // "
-        // ELF contains non-{map,call} related relo data in entry 4
-        // pointing to section 4! Compiler bug?!
-        // "
-		bpf_probe_read_kernel(&dname, dname_len, dname_start);
+        bpf_printk("new dname: %s", dname);
+        bpf_printk("new dname: %s", dnameptr + 2);
 
-		//bpf_skb_load_bytes(skb, 55, &dname, 10);
-
-
-		//memcpy(&dname, skb->data + (void *)55, 8);
-		
 		bpf_printk("DNAME? %s", &dname);
 		uint64_t *dnamep = bpf_map_lookup_elem(&dnames_v4, &dname);
 		if (dnamep) {
@@ -182,11 +185,6 @@ int tc_stats_egress(struct __sk_buff *skb)
 			bpf_map_update_elem(&dnames_v4, &dname, &new_value, 0);
 		}
 
-
-		//memcpy(&dname, skb->data + (void *)55, dname_len);
-		//bpf_skb_load_bytes(skb, 55, (void *)&dname, 10);
-		//bpf_printk("DNAME? %s", &dnamep);
-		//bpf_skb_load_bytes(skb, 55, (void *)&dname, dname_len);
 
 	}
     return TC_ACT_OK;
