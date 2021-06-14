@@ -149,6 +149,35 @@ int print_response_sizes(int response_sizes_fd, uint8_t af)
 	return 0;
 }
 
+void pretty_dname(char* pretty, char* dname)
+{
+	for (int i = 0; i <= strlen(dname); i++) {
+        if (dname[i] < 48) // 48 decimal is ascii "0" (not NUL!) TODO this ok?
+            pretty[i] = '.';
+        else
+            pretty[i] = dname[i];
+	}
+}
+int print_dnames(int dnames_fd, uint8_t af)
+{
+	char key[31] = { 0 };
+	char pretty[31] = { 0 };
+	void *keyp = &key, *prev_keyp = NULL;
+	//char dname_str[31];
+	uint64_t count;
+	while (!bpf_map_get_next_key(dnames_fd, prev_keyp, keyp)) {
+		bpf_map_lookup_elem(dnames_fd, &key, &count);
+        pretty_dname(pretty, key);
+		if (count > 0)
+			printf("dname{af=\"%i\", dname=\"%s\"} %ld\n", af, pretty, count);
+
+		prev_keyp = keyp;
+	}
+
+	return 0;
+
+}
+
 int main(int argc, char **argv)
 {
 	char *fn6 = "/sys/fs/bpf/stats_v6";
@@ -188,10 +217,15 @@ int main(int argc, char **argv)
 	struct bpf_map_info rcodes6;
 	struct bpf_map_info response_sizes4;
 	struct bpf_map_info response_sizes6;
+	struct bpf_map_info dnames4;
+	struct bpf_map_info dnames6;
+
 	char *rcodes_v4_fn = "/sys/fs/bpf/tc/globals/rcodes_v4";
 	char *rcodes_v6_fn = "/sys/fs/bpf/tc/globals/rcodes_v6";
 	char *response_sizes_v4_fn = "/sys/fs/bpf/tc/globals/response_sizes_v4";
 	char *response_sizes_v6_fn = "/sys/fs/bpf/tc/globals/response_sizes_v6";
+	char *dnames_v4_fn = "/sys/fs/bpf/tc/globals/dnames_v4";
+	char *dnames_v6_fn = "/sys/fs/bpf/tc/globals/dnames_v6";
 
 	uint32_t rcodes_v4_info = sizeof(rcodes4), rcodes_v4_len = sizeof(rcodes4);
 	uint32_t rcodes_v6_info = sizeof(rcodes6), rcodes_v6_len = sizeof(rcodes6);
@@ -201,27 +235,48 @@ int main(int argc, char **argv)
 	uint32_t response_sizes_v6_info = sizeof(response_sizes4), response_sizes_v6_len = sizeof(response_sizes6);
 	int response_sizes_v4_fd, response_sizes_v6_fd;
 
+
+	uint32_t dnames_v4_info = sizeof(dnames4), dnames_v4_len = sizeof(dnames4);
+	uint32_t dnames_v6_info = sizeof(dnames4), dnames_v6_len = sizeof(dnames6);
+	int dnames_v4_fd, dnames_v6_fd;
+
 	if ((rcodes_v4_fd = bpf_obj_get(rcodes_v4_fn)) < 0)
 		fprintf(stderr, "Error opening %s: %s", rcodes_v4_fn, strerror(errno));
 	else if (bpf_obj_get_info_by_fd(rcodes_v4_fd, &rcodes_v4_info, &rcodes_v4_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , rcodes_v4_fn, strerror(errno));
+
 	else if ((rcodes_v6_fd = bpf_obj_get(rcodes_v6_fn)) < 0)
 		fprintf(stderr, "Error opening %s: %s", rcodes_v6_fn, strerror(errno));
 	else if (bpf_obj_get_info_by_fd(rcodes_v6_fd, &rcodes_v6_info, &rcodes_v6_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , rcodes_v6_fn, strerror(errno));
+
 	else if ((response_sizes_v4_fd = bpf_obj_get(response_sizes_v4_fn)) < 0)
 		fprintf(stderr, "Error opening %s: %s", response_sizes_v4_fn, strerror(errno));
 	else if (bpf_obj_get_info_by_fd(response_sizes_v4_fd, &response_sizes_v4_info, &response_sizes_v4_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , response_sizes_v4_fn, strerror(errno));
+
 	else if ((response_sizes_v6_fd = bpf_obj_get(response_sizes_v6_fn)) < 0)
 		fprintf(stderr, "Error opening %s: %s", response_sizes_v6_fn, strerror(errno));
 	else if (bpf_obj_get_info_by_fd(response_sizes_v6_fd, &response_sizes_v6_info, &response_sizes_v6_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , response_sizes_v6_fn, strerror(errno));
+
+	else if ((dnames_v4_fd = bpf_obj_get(dnames_v4_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", dnames_v4_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(dnames_v4_fd, &dnames_v4_info, &dnames_v4_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , dnames_v4_fn, strerror(errno));
+
+	else if ((dnames_v6_fd = bpf_obj_get(dnames_v6_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", dnames_v6_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(dnames_v6_fd, &dnames_v6_info, &dnames_v6_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , dnames_v6_fn, strerror(errno));
+
 	else {
 		print_rcodes(rcodes_v4_fd, 4);
 		print_rcodes(rcodes_v6_fd, 6);
 		print_response_sizes(response_sizes_v4_fd, 4);
 		print_response_sizes(response_sizes_v6_fd, 6);
+		print_dnames(dnames_v4_fd, 4);
+		print_dnames(dnames_v6_fd, 6);
 	}
 
 

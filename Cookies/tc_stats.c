@@ -46,6 +46,57 @@ int update_stats(
     return TC_ACT_OK;
 }
 
+/*
+SEC("do-update-dnames")
+int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff* skb)
+{
+    
+		void *dname_start =  c->pos;
+		skip_dname(c);
+		void *dname_end =  c->pos;
+
+		uint32_t dname_len = (uint32_t)(dname_end - dname_start);
+
+		bpf_printk("TEST: %s", skb->data + 55);
+		bpf_printk("skb data: %i", skb->data_end - skb->data);
+		char dname[31] = {0};
+
+		bpf_printk("dname len %i", dname_len);
+		// for longer dnames, skip the first part to make sure we capture the last part (with the tld)
+		if (dname_len > 31) {
+			dname_start += dname_len - 31;
+			dname_len = 31;
+		}
+		dname_len &= 31;
+		bpf_printk("dname len & x %i", dname_len);
+
+        // breaks:
+        // "
+        // ELF contains non-{map,call} related relo data in entry 4
+        // pointing to section 4! Compiler bug?!
+        // "
+		bpf_probe_read_kernel(&dname, dname_len, dname_start);
+
+		//bpf_skb_load_bytes(skb, 55, &dname, 10);
+
+
+		//memcpy(&dname, skb->data + (void *)55, 8);
+		
+		bpf_printk("DNAME? %s", &dname);
+		uint64_t *dnamep = NULL; // = bpf_map_lookup_elem(dnames, &dname);
+		if (dnamep) {
+			*dnamep += 1;
+			bpf_printk("existing dname %s, value %i", &dname, *dnamep);
+		} else {
+			bpf_printk("new dname %s, inserting..", &dname);
+			uint64_t new_value = 1;
+			bpf_map_update_elem(dnames, &dname, &new_value, 0);
+		}
+
+    return TC_ACT_OK;
+}
+*/
+
 SEC("tc-stats-egress")
 int tc_stats_egress(struct __sk_buff *skb)
 {
@@ -76,39 +127,6 @@ int tc_stats_egress(struct __sk_buff *skb)
 		bpf_printk("IPv6 DNS response\n");
 		update_stats(&rcodes_v6, &response_sizes_v6, udp, dns);
 
-/*
-		struct query_v6 q;
-		memcpy(&q.addr, &ipv6->saddr, sizeof(q.addr));
-		q.port = udp->dest;
-		q.id = dns->id;
-
-		if (!bpf_map_delete_elem(&queries_v6, &q)) {
-			uint16_t msg_sz = c.end - (void *)dns + 4;
-			uint16_t pad_len = 468 - (msg_sz % 468);
-			uint16_t to_grow = 4 + pad_len;
-			uint16_t pad_opt[2] = { __bpf_ntohs(OPT_CODE_PADDING)
-			                      , __bpf_ntohs(pad_len) };
-
-			if (!skip_dname(&c) || !parse_dns_qrr(&c))
-				return TC_ACT_OK;
-
-			skb->cb[0] = __bpf_ntohs(dns->ancount)
-			           + __bpf_ntohs(dns->nscount)
-			           + __bpf_ntohs(dns->arcount) - 1;
-			skb->cb[1] = c.pos - (void *)(long)skb->data;
-
-			ipv6->payload_len = udp->len =
-				__bpf_htons(__bpf_ntohs(udp->len)+ to_grow);
-
-			bpf_skb_change_tail( skb, pkt_end + to_grow, 0);
-			bpf_skb_store_bytes( skb, pkt_end, pad_opt, 4
-			                   , BPF_F_RECOMPUTE_CSUM);
-
-    			bpf_tail_call(skb, &jmp_map, 0);
-			bpf_printk("IPv6 bpf_tail_call() failed\n");
-		}
-*/
-
 	} else if (eth_proto == __bpf_htons(ETH_P_IP)) {
 		if (!(ipv4 = parse_iphdr(&c))
 		||  !(ipv4->protocol == IPPROTO_UDP)
@@ -119,75 +137,57 @@ int tc_stats_egress(struct __sk_buff *skb)
 	 		return TC_ACT_OK; /* Not DNS */
 
 		bpf_printk("IPv4 DNS response\n");
-		//update_stats(&rcodes_v4, udp, dns);
 		update_stats(&rcodes_v4, &response_sizes_v4, udp, dns);
-/*
-		uint32_t rcode = (uint32_t) dns->flags.as_bits_and_pieces.rcode;
-		//uint8_t key = {rcode};
-    	bpf_printk("in update_stats for outgoing packet, rcode %i\n", rcode);
+        //update_dnames(&dnames_v4, &c, skb);
 
-		uint64_t* current_rcode_count = bpf_map_lookup_elem(&rcodes_v4, &rcode);
-		if (current_rcode_count) {
-			*current_rcode_count += 1;
-			bpf_printk("rcodes %i seen: %i\n", rcode, *current_rcode_count);
-		}
-		update_stats(&rcodes_v4, 12);
+		void *dname_start =  c.pos;
+		skip_dname(&c);
+		void *dname_end =  c.pos;
 
-		uint32_t size_key = __bpf_ntohs(udp->len);
-		bpf_printk("udp->len: %i", size_key);
-		uint64_t* current_size_count = bpf_map_lookup_elem(&response_sizes_v4, &size_key);
-		if (current_size_count) {
-			*current_size_count += 1;
-			bpf_printk("size %i seen: %i", size_key, *current_size_count);
+		uint32_t dname_len = (uint32_t)(dname_end - dname_start);
+
+		bpf_printk("TEST: %s", skb->data + 55);
+		bpf_printk("skb data: %i", skb->data_end - skb->data);
+		char dname[31] = {0};
+
+		bpf_printk("dname len %i", dname_len);
+		// for longer dnames, skip the first part to make sure we capture the last part (with the tld)
+		if (dname_len > 31) {
+			dname_start += dname_len - 31;
+			dname_len = 31;
 		}
-*/
+		dname_len &= 31;
+		bpf_printk("dname len & x %i", dname_len);
+
+        // breaks:
+        // "
+        // ELF contains non-{map,call} related relo data in entry 4
+        // pointing to section 4! Compiler bug?!
+        // "
+		bpf_probe_read_kernel(&dname, dname_len, dname_start);
+
+		//bpf_skb_load_bytes(skb, 55, &dname, 10);
+
+
+		//memcpy(&dname, skb->data + (void *)55, 8);
 		
-		//bpf_map_update_elem(&rcodes_v4, dns->flags.as_bits_and_pieces.rcode, += 1;
-
-		//update_stats(&rcodes_v4, dns->flags.as_bits_and_pieces.rcode);
-
-/*
-		struct query_v4 q;
-		q.addr = ipv4->saddr;
-		q.port = udp->dest;
-		q.id = dns->id;
-
-		if (!bpf_map_delete_elem(&queries_v4, &q)) {
-			uint16_t msg_sz = c.end - (void *)dns + 4;
-			uint16_t pad_len = 468 - (msg_sz % 468);
-			uint16_t to_grow = 4 + pad_len;
-			uint16_t pad_opt[2] = { __bpf_ntohs(OPT_CODE_PADDING)
-			                      , __bpf_ntohs(pad_len) };
-
-			if (!skip_dname(&c) || !parse_dns_qrr(&c))
-				return TC_ACT_OK;
-
-			skb->cb[0] = __bpf_ntohs(dns->ancount)
-			           + __bpf_ntohs(dns->nscount)
-			           + __bpf_ntohs(dns->arcount) - 1;
-			skb->cb[1] = c.pos - (void *)(long)skb->data;
-
-			uint32_t old_len = ipv4->tot_len;
-			uint32_t new_len = __bpf_htons(
-					__bpf_ntohs(ipv4->tot_len) + to_grow);
-			uint32_t csum = ~((uint32_t)ipv4->check);
-
-			ipv4->tot_len = new_len;
-			csum = bpf_csum_diff( &old_len, sizeof(old_len)
-			                    , &new_len, sizeof(new_len), csum);
-			csum = (csum & 0xFFFF) + (csum >> 16);
-			csum = (csum & 0xFFFF) + (csum >> 16);
-			ipv4->check = ~csum;
-
-			udp->len = __bpf_htons(__bpf_ntohs(udp->len)+ to_grow);
-
-			bpf_skb_change_tail( skb, pkt_end + to_grow, 0);
-			bpf_skb_store_bytes( skb, pkt_end, pad_opt, 4
-			                   , BPF_F_RECOMPUTE_CSUM);
-    			bpf_tail_call(skb, &jmp_map, 0);
-			bpf_printk("IPv4 bpf_tail_call() failed\n");
+		bpf_printk("DNAME? %s", &dname);
+		uint64_t *dnamep = bpf_map_lookup_elem(&dnames_v4, &dname);
+		if (dnamep) {
+			*dnamep += 1;
+			bpf_printk("existing dname %s, value %i", &dname, *dnamep);
+		} else {
+			bpf_printk("new dname %s, inserting..", &dname);
+			uint64_t new_value = 1;
+			bpf_map_update_elem(&dnames_v4, &dname, &new_value, 0);
 		}
-*/
+
+
+		//memcpy(&dname, skb->data + (void *)55, dname_len);
+		//bpf_skb_load_bytes(skb, 55, (void *)&dname, 10);
+		//bpf_printk("DNAME? %s", &dnamep);
+		//bpf_skb_load_bytes(skb, 55, (void *)&dname, dname_len);
+
 	}
     return TC_ACT_OK;
 }
