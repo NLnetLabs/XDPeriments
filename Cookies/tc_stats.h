@@ -40,14 +40,14 @@ struct bpf_elf_map SEC("maps") response_sizes_v6 = {
 };
 
 struct bpf_elf_map SEC("maps") dnames_v4 = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
+    .type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
     .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
     .size_value = sizeof(uint64_t),
     .max_elem = 10,
     .pinning = PIN_GLOBAL_NS
 };
 struct bpf_elf_map SEC("maps") dnames_v6 = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
+    .type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
     .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
     .size_value = sizeof(uint64_t),
     .max_elem = 10,

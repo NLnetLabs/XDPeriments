@@ -162,11 +162,17 @@ int print_dnames(int dnames_fd, uint8_t af)
 {
 	char key[255] = { 0 };
 	void *keyp = &key, *prev_keyp = NULL;
-	uint64_t count;
+	uint64_t counts[8]; // num cpus, TODO make configurable
     while (!bpf_map_get_next_key(dnames_fd, prev_keyp, keyp)) {
-        bpf_map_lookup_elem(dnames_fd, &key, &count);
+        //bpf_printk("print_dnames, in while");
+        bpf_map_lookup_elem(dnames_fd, &key, counts);
         char pretty[255] = { 0 };
         pretty_dname(pretty, key);
+
+        uint64_t count = 0;
+        for (int i = 0; i < 8; i++) {
+            count += counts[i];
+        }
         if (count > 0)
             printf("dname{af=\"%i\", dname=\"%s\"} %ld\n", af, pretty, count);
 
