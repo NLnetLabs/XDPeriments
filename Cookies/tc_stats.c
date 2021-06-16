@@ -110,8 +110,7 @@ int tc_stats_egress(struct __sk_buff *skb)
 		||  !(ipv6->nexthdr == IPPROTO_UDP)
 	 	||  !(udp = parse_udphdr(&c))
 		||  !(udp->source == __bpf_htons(DNS_PORT))
-	 	||  !(dns = parse_dnshdr(&c))
-		||  !__bpf_ntohs(dns->arcount))
+	 	||  !(dns = parse_dnshdr(&c)))
 	 		return TC_ACT_OK; /* Not DNS with OPT RR*/
 
 		//bpf_printk("IPv6 DNS response\n");
@@ -119,13 +118,12 @@ int tc_stats_egress(struct __sk_buff *skb)
         update_dnames(&dnames_v6, &c, skb);
 
 	} else if (eth_proto == __bpf_htons(ETH_P_IP)) {
-		if (!(ipv4 = parse_iphdr(&c))
-		||  !(ipv4->protocol == IPPROTO_UDP)
-	 	||  !(udp = parse_udphdr(&c))
-		||  !(udp->source == __bpf_htons(DNS_PORT))
-	 	||  !(dns = parse_dnshdr(&c))
-		||  !__bpf_ntohs(dns->arcount))
-	 		return TC_ACT_OK; /* Not DNS */
+        if (!(ipv4 = parse_iphdr(&c))
+        ||  !(ipv4->protocol == IPPROTO_UDP)
+        ||  !(udp = parse_udphdr(&c))
+        ||  !(udp->source == __bpf_htons(DNS_PORT))
+        ||  !(dns = parse_dnshdr(&c)))
+            return TC_ACT_OK; /* Not DNS */
 
 		//bpf_printk("IPv4 DNS response\n");
 		update_stats(&rcodes_v4, &response_sizes_v4, udp, dns);
