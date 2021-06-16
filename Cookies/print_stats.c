@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -149,14 +150,25 @@ int print_response_sizes(int response_sizes_fd, uint8_t af)
 	return 0;
 }
 
-void pretty_dname(char* pretty, char* dname)
+void pretty_dname(char* dname)
 {
-	for (int i = 0; i <= strlen(dname); i++) {
-        if (dname[i] < 48) // 48 decimal is ascii "0" (not NUL!) TODO this ok?
-            pretty[i] = '.';
-        else
-            pretty[i] = dname[i];
-	}
+
+    char len;
+    int i = 0;
+	while (i < 255) {
+        len = dname[i];
+        if (len == 0) break;
+        printf(".");
+        for (int j = 0; j < len; j++) {
+            i++;
+            if (isprint((int)dname[i]))
+                printf("%c", dname[i]);
+            else {
+                printf("\\%03u", (uint8_t) dname[i]);
+            }
+        }
+        i++;
+    }
 }
 int print_dnames(int dnames_fd, uint8_t af)
 {
@@ -164,17 +176,17 @@ int print_dnames(int dnames_fd, uint8_t af)
 	void *keyp = &key, *prev_keyp = NULL;
 	uint64_t counts[8]; // num cpus, TODO make configurable
     while (!bpf_map_get_next_key(dnames_fd, prev_keyp, keyp)) {
-        //bpf_printk("print_dnames, in while");
         bpf_map_lookup_elem(dnames_fd, &key, counts);
-        char pretty[255] = { 0 };
-        pretty_dname(pretty, key);
 
         uint64_t count = 0;
         for (int i = 0; i < 8; i++) {
             count += counts[i];
         }
-        if (count > 0)
-            printf("dname{af=\"%i\", dname=\"%s\"} %ld\n", af, pretty, count);
+        if (count > 0) {
+            printf("dname{af=\"%i\", dname=\"", af);
+            pretty_dname(key);
+            printf("\"} %ld\n", count);
+        }
 
         prev_keyp = keyp;
     }
