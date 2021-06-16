@@ -2,26 +2,23 @@
 
 from scapy.all import *
 from random import choice, randint
-from string import ascii_letters
+from string import ascii_letters, ascii_lowercase
 from time import sleep
 
-sources = IP(src="127.0.0.0/24", dst="127.0.0.1")/UDP(sport=RandShort(), dport=53)
-qnames = [''.join([random.choice(ascii_letters) for _ in
-    range(randint(1,20))])+".fake.nl" for _ in range(2)]
-
-NUM_QUERIES = 100
+NUM_QUERIES = 10
 for i in range(NUM_QUERIES):
 
 
-    sub = ''.join([choice(ascii_letters) for _ in range(randint(1,63))])
+    sub = ''.join([choice(ascii_lowercase) for _ in range(randint(5,10))])
     qname = sub + ".fake.nl"
     qtype = choice(["A", "AAAA", "MX", "CNAME", "NS", "TXT", "SRV", "SOA"])
 
-    p = IP(src=RandIP("127.0.0.0/16"), dst="127.0.0.1")/UDP(sport=RandShort(),
-            dport=53)/DNS(rd=1, qd=DNSQR(qname=qname, qtype=qtype))
-    send(p, iface="lo", verbose=0)
-    if i % 10 == 0:
+    p = IP(src=RandIP("192.168.99.0/24"),dst="192.168.10.21")/UDP(sport=RandShort(), dport=53
+            )/DNS(id=RandShort(), ad=1,rd=1,qd=DNSQR(qname=qname, qtype=qtype))
+
+    send(p, iface="eno1", verbose=0)
+    if i % (NUM_QUERIES/10) == 0:
         print("sent {}/{}".format(i, NUM_QUERIES))
 
-    sleep(0.01)
+    #sleep(0.001)
 
