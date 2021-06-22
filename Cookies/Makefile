@@ -14,7 +14,7 @@ all: $(XDP_PROG) $(TC_PROG) xdp_dns_cookies_user xdp_rrl_vipctl print_stats
 $(XDP_PROG): xdp_dns_cookies_kern.c siphash4bpf.c
 	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
 
-$(TC_PROG): tc_stats.c tc_stats.h bpf-dns.h
+$(TC_PROG): tc_stats.c tc_stats.h bpf-dns.h murmur3.c
 	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
 
 xdp_dns_cookies_user: xdp_dns_cookies_user.c
@@ -27,7 +27,7 @@ print_stats: print_stats.c
 	$(CC) -static $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 clean: unmount
-	rm -f $(XDP_PROG) xdp_dns_cookies_user xdp_rrl_vipctl print_stats
+	rm -f $(XDP_PROG) $(TC_PROG) xdp_dns_cookies_user xdp_rrl_vipctl print_stats
 
 dump: $(XDP_PROG)
 	llvm-objdump -S $(XDP_PROG)

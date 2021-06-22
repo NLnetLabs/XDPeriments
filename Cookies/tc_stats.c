@@ -4,6 +4,7 @@
 #include <bpf_helpers.h>      /* for SEC */
 #include "bpf-dns.h"
 #include "tc_stats.h"
+#include "murmur3.c"
 
 #define LOAD_DNAME(n) {\
     if (dname_len >= n) {\
@@ -140,7 +141,7 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
 {
         struct dname dname = {0};
         
-        parse_dname(&dname, c, skb);
+        size_t len = parse_dname(&dname, c, skb);
 		uint64_t *tld_p = bpf_map_lookup_elem(&tlds, dname.tld);
         if (tld_p) {
             *tld_p += 1;
@@ -173,6 +174,73 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
                 }
             }
 		}
+
+	// bloom filter experiments
+	uint32_t seed = 0;
+	//uint32_t h = murmur3_32((uint8_t *) dname.full, dname.len, seed);
+	//uint8_t key = dname.full;
+	//size_t len = dname.len;
+	len = 255; // FIXME using the actual dname.len does not work, for some reason
+	uint32_t h1 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 20);
+	seed = 0x12345;
+	uint32_t h2 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 20);
+	//Kirsch-Mitzenmacher-Optimization: hash_i = hash1 + i x hash2
+	uint32_t h3 = (h1 + 3 * h2) % (1 << 20);
+	uint32_t h4 = (h1 + 4 * h2) % (1 << 20);
+	uint32_t h5 = (h1 + 5 * h2) % (1 << 20);
+	uint32_t h6 = (h1 + 6 * h2) % (1 << 20);
+	//bpf_printk("hash: %x", h1);
+	//bpf_printk("hash: %x", h2);
+	//bpf_printk("hash: %x", h3);
+	//bpf_printk("hash: %x", h4);
+	//bpf_printk("hash: %x", h5);
+	//bpf_printk("hash: %x", h6);
+
+	// have we seen this before? if so, start counting in the 'real' map
+	//uint8_t *r = bpf_map_lookup_elem(&dnames_bloom, &h1);
+	//bpf_printk("h1 value: %i", *(uint8_t *)(bpf_map_lookup_elem(&dnames_bloom, &h1)));
+	
+	uint8_t *r1 = bpf_map_lookup_elem(&dnames_bloom, &h1);
+	uint8_t *r2 = bpf_map_lookup_elem(&dnames_bloom, &h2);
+	uint8_t *r3 = bpf_map_lookup_elem(&dnames_bloom, &h3);
+	uint8_t *r4 = bpf_map_lookup_elem(&dnames_bloom, &h4);
+	uint8_t *r5 = bpf_map_lookup_elem(&dnames_bloom, &h5);
+	uint8_t *r6 = bpf_map_lookup_elem(&dnames_bloom, &h6);
+	if (r1 && r2 && r3 && r4 && r5 && r6) { // always true because we're working with a _ARRAY
+		if (*r1 && *r2 && *r3 && *r4 && *r5 && *r6) {
+			bpf_printk("dname %s seen before according to bloom filter");
+		} else {
+			bpf_printk("new dname %s, updating bloom filter", dname.full);
+			uint8_t one = 1;
+			bpf_map_update_elem(&dnames_bloom, &h1, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &h2, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &h3, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &h4, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &h5, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &h6, &one, BPF_ANY);
+		}
+	}
+	
+/*
+	if (bpf_map_lookup_elem(&dnames_bloom, &h1) &&
+			bpf_map_lookup_elem(&dnames_bloom, &h2) &&
+			bpf_map_lookup_elem(&dnames_bloom, &h3) &&
+			bpf_map_lookup_elem(&dnames_bloom, &h4) &&
+			bpf_map_lookup_elem(&dnames_bloom, &h5) &&
+			bpf_map_lookup_elem(&dnames_bloom, &h6)) {
+		bpf_printk("dname %s seen before according to bloom filter");
+	} else {
+		bpf_printk("new dname %s, updating bloom filter");
+		//// now update dnames_bloom:
+		uint8_t one = 1;
+		bpf_map_update_elem(&dnames_bloom, &h1, &one, BPF_ANY);
+		bpf_map_update_elem(&dnames_bloom, &h2, &one, BPF_ANY);
+		bpf_map_update_elem(&dnames_bloom, &h3, &one, BPF_ANY);
+		bpf_map_update_elem(&dnames_bloom, &h4, &one, BPF_ANY);
+		bpf_map_update_elem(&dnames_bloom, &h5, &one, BPF_ANY);
+		bpf_map_update_elem(&dnames_bloom, &h6, &one, BPF_ANY);
+	}
+*/
 
     return 0;
 }

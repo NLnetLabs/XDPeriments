@@ -56,6 +56,28 @@ struct bpf_elf_map SEC("maps") dnames_v6 = {
     .pinning = PIN_GLOBAL_NS
 };
 
+// before we add dnames to our PER_CPU hashmap, we track them in a bloom filter
+// to prevent single-timers to be wasting space in our hashmap.
+// Do we care about possible race conditions in the bloom filter? It might
+// introduce false negatives?  
+// What if we split up the bloom filter into array elements, i.e. set max_elem
+// to 'm' ( https://en.wikipedia.org/wiki/Bloom_filter ) ? Would that eliminate
+// race conditions in a MAP_TYPE_ARRAY?
+//
+// error of 0.01
+// n of 100_000
+// gives 
+//  m = - (n * log(e)) / (log(2)^2)
+//      ==~ 958_506 ==~ 1M
+
+struct bpf_elf_map SEC("maps") dnames_bloom = {
+    .type = BPF_MAP_TYPE_ARRAY,
+    .size_key = sizeof(uint32_t),
+    .size_value = 1,
+    .max_elem = 1 << 30,
+    .pinning = PIN_GLOBAL_NS
+};
+
 struct dname {
     char full[255];
     char tld[10];
