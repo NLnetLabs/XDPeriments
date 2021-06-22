@@ -49,41 +49,127 @@ int update_stats(
     return 0;
 }
 
+#define COPY_DNAME(skb, offset, dst, dname_len, n) {\
+    if (dname_len >= n) {\
+        bpf_skb_load_bytes(skb, offset, dst, n);\
+        offset += n;\
+        dst += n;\
+        dname_len -= n;\
+    }\
+}
+
+#define COPY_TLD(skb, offset, dst, tld_len, n) {\
+    if (tld_len == n) {\
+        bpf_skb_load_bytes(skb, offset - tld_len + 1, res->tld, n - 1);\
+    }\
+}
+
+// returns length of dname
+// records the dname, length and tld offset in dname* res
+static __always_inline
+int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
+{
+    uint32_t offset = (uint32_t)(c->pos - (void *)(long)skb->data);
+
+    res->len = 0;
+    res->tld_offset = 0;
+
+
+    // determine total length of the dname, and the offset of the last label
+    uint8_t i;
+    for (i = 0; i < 128; i++) {
+        if (c->pos + 1 > c->end) {
+            bpf_printk("early return 1");
+            return res->len;
+        }
+
+        uint8_t labellen;
+        labellen = *(uint8_t*)c->pos;
+        if (labellen == 0)
+            break;
+
+        res->tld_offset = res->len;
+
+        if (c->pos + labellen + 1 > c->end) {
+            bpf_printk("early return 2");
+            return res->len;
+        }
+        res->len += labellen + 1;
+        c->pos += labellen + 1;
+    }
+
+    // use LOAD_DNAME to copy 64/32/16 etc bytes
+
+    void* to= res->full;
+    uint32_t dname_len = res->len;
+
+    COPY_DNAME(skb, offset, to, dname_len, 64);
+    COPY_DNAME(skb, offset, to, dname_len, 32);
+    COPY_DNAME(skb, offset, to, dname_len, 16);
+    COPY_DNAME(skb, offset, to, dname_len, 8);
+    COPY_DNAME(skb, offset, to, dname_len, 4);
+    COPY_DNAME(skb, offset, to, dname_len, 2);
+    COPY_DNAME(skb, offset, to, dname_len, 1);
+
+
+    bpf_printk("dname len: %i", res->len);
+
+    // now copy the .tld
+    int tld_len = res->len - res->tld_offset;
+
+    COPY_TLD(skb, offset, res->tld, tld_len, 10); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 9); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 8); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 7); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 6); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 5); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 4); 
+    COPY_TLD(skb, offset, res->tld, tld_len, 3); 
+    
+    //bpf_printk("returning full: %s", &res->full);
+    //bpf_printk("returning tld: %s", &res->tld);
+    return res->len;
+}
+
 static __always_inline
 int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff* skb)
 {
-    
-		void *dname_start =  c->pos;
-		skip_dname(c);
-		void *dname_end =  c->pos;
+        struct dname dname = {0};
+        
+        parse_dname(&dname, c, skb);
+		uint64_t *tld_p = bpf_map_lookup_elem(&tlds, dname.tld);
+        if (tld_p) {
+            *tld_p += 1;
+            bpf_printk("existing TLD %s, now seen %i", dname.tld, *tld_p);
+        } else {
+            bpf_printk("new TLD %s, inserting ..", dname.tld);
+            uint64_t one = 1;
+            if (bpf_map_update_elem(&tlds, dname.tld, &one, 0) < 0) {
+                bpf_printk("failed to insert new TLD");
+            }
+        }
 
-		uint32_t dname_len = (uint32_t)(dname_end - dname_start);
 
-		char dname[255] = {0};
-        char * dnameptr = dname;
-
-        uint32_t offset = (uint32_t)(dname_start - (void *)(long)skb->data);
-        void *to = dnameptr;
-        LOAD_DNAME(128);
-        LOAD_DNAME(64);
-        LOAD_DNAME(32);
-        LOAD_DNAME(16);
-        LOAD_DNAME(8);
-        LOAD_DNAME(4);
-        LOAD_DNAME(2);
-        LOAD_DNAME(1);
-
-		uint64_t *dnamep = bpf_map_lookup_elem(dnames, &dname);
+		uint64_t *dnamep = bpf_map_lookup_elem(dnames, dname.full);
 		if (dnamep) {
 			*dnamep += 1;
 			//bpf_printk("existing dname %s, value %i", &dname, *dnamep);
 		} else {
-			//bpf_printk("new dname %s, inserting..", &dname);
+			bpf_printk("new dname %s, inserting..", &dname);
 			uint64_t new_value = 1;
-			bpf_map_update_elem(dnames, &dname, &new_value, 0);
+			if (bpf_map_update_elem(dnames, dname.full, &new_value, 0) < 0) {
+                bpf_printk("error trying to insert new dname");
+            } else {
+                //bpf_printk("inserted, checking:");
+                uint64_t *dnamep2 = bpf_map_lookup_elem(dnames, dname.full);
+                if (!dnamep2) {
+                    bpf_printk("FAILed to insert dname");
+                } else {
+                    //bpf_printk("success: %i", *dnamep2);
+                }
+            }
 		}
 
-    //return TC_ACT_OK;
     return 0;
 }
 
