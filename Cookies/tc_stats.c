@@ -72,7 +72,7 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     uint32_t offset = (uint32_t)(c->pos - (void *)(long)skb->data);
 
     res->len = 0;
-    res->tld_offset = 0;
+    uint8_t tld_offset = 0;
 
 
     // determine total length of the dname, and the offset of the last label
@@ -88,7 +88,7 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
         if (labellen == 0)
             break;
 
-        res->tld_offset = res->len;
+        tld_offset = res->len;
 
         if (c->pos + labellen + 1 > c->end) {
             bpf_printk("early return 2");
@@ -115,7 +115,11 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     bpf_printk("dname len: %i", res->len);
 
     // now copy the .tld
-    int tld_len = res->len - res->tld_offset;
+    int tld_len = res->len - tld_offset;
+
+    if (tld_len > 10) {
+        bpf_skb_load_bytes(skb, offset - tld_len + 1, res->tld, 10);
+    }
 
     COPY_TLD(skb, offset, res->tld, tld_len, 10); 
     COPY_TLD(skb, offset, res->tld, tld_len, 9); 
@@ -140,9 +144,9 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
 		uint64_t *tld_p = bpf_map_lookup_elem(&tlds, dname.tld);
         if (tld_p) {
             *tld_p += 1;
-            bpf_printk("existing TLD %s, now seen %i", dname.tld, *tld_p);
+            //bpf_printk("existing TLD %s, now seen %i", dname.tld, *tld_p);
         } else {
-            bpf_printk("new TLD %s, inserting ..", dname.tld);
+            //bpf_printk("new TLD %s, inserting ..", dname.tld);
             uint64_t one = 1;
             if (bpf_map_update_elem(&tlds, dname.tld, &one, 0) < 0) {
                 bpf_printk("failed to insert new TLD");
