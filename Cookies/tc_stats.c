@@ -6,8 +6,10 @@
 #include "tc_stats.h"
 #include "murmur3.c"
 
+#define BLOOM_THRESHOLD 10  // minimum observations before adding to dnames map
 #define DIAG_BLOOMCOUNT 0   // number of elements tracked by the bloom filter
 #define DIAG_HIT 1          // number of hits / successful lookups
+#define DIAG_OVERFLOW 2     // track overflows of the bloom uint8_t
 
 static __always_inline
 int update_stats(
@@ -146,33 +148,22 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
 	//bpf_printk("hashes: %x %x %x", h1, h2, h3);
 	//bpf_printk("        %x %x %x", h4, h5, h6);
 
-	uint32_t k1 = h1; // >> 8; uint8_t v1 = h1 & 0xff;
-	uint32_t k2 = h2; // >> 8; uint8_t v2 = h2 & 0xff;
-	uint32_t k3 = h3; // >> 8; uint8_t v3 = h3 & 0xff;
-	uint32_t k4 = h4; // >> 8; uint8_t v4 = h4 & 0xff;
-	uint32_t k5 = h5; // >> 8; uint8_t v5 = h5 & 0xff;
-	uint32_t k6 = h6; // >> 8; uint8_t v6 = h6 & 0xff;
-
-	//bpf_printk("keys: %x %x %x", k1, k2, k3);
-	//bpf_printk("      %x %x %x", k4, k5, k6);
-	
-	uint8_t *r1 = bpf_map_lookup_elem(&dnames_bloom, &k1);
-	uint8_t *r2 = bpf_map_lookup_elem(&dnames_bloom, &k2);
-	uint8_t *r3 = bpf_map_lookup_elem(&dnames_bloom, &k3);
-	uint8_t *r4 = bpf_map_lookup_elem(&dnames_bloom, &k4);
-	uint8_t *r5 = bpf_map_lookup_elem(&dnames_bloom, &k5);
-	uint8_t *r6 = bpf_map_lookup_elem(&dnames_bloom, &k6);
+	uint8_t *r1 = bpf_map_lookup_elem(&dnames_bloom, &h1);
+	uint8_t *r2 = bpf_map_lookup_elem(&dnames_bloom, &h2);
+	uint8_t *r3 = bpf_map_lookup_elem(&dnames_bloom, &h3);
+	uint8_t *r4 = bpf_map_lookup_elem(&dnames_bloom, &h4);
+	uint8_t *r5 = bpf_map_lookup_elem(&dnames_bloom, &h5);
+	uint8_t *r6 = bpf_map_lookup_elem(&dnames_bloom, &h6);
 	if (r1 && r2 && r3 && r4 && r5 && r6) { // always true because we're working with a _ARRAY
-		if (*r1 && *r2 && *r3 && *r4 && *r5 && *r6) {
-		//bpf_printk("%x %x %x", *r1, *r2, *r3);
-		//bpf_printk("%x %x %x", *r4, *r5, *r6);
-		//if ((*r1 & v1) == v1 &&
-		//	(*r2 & v2) == v2 &&
-		//	(*r3 & v3) == v3 &&
-		//	(*r4 & v4) == v4 &&
-		//	(*r5 & v5) == v5 &&
-		//	(*r6 & v6) == v6) {
-			//bpf_printk("dname %s seen before according to bloom filter", dname.full);
+		if (*r1 >= BLOOM_THRESHOLD &&
+            *r2 >= BLOOM_THRESHOLD &&
+            *r3 >= BLOOM_THRESHOLD &&
+            *r4 >= BLOOM_THRESHOLD &&
+            *r5 >= BLOOM_THRESHOLD &&
+            *r6 >= BLOOM_THRESHOLD
+            ) {
+
+            //bpf_printk("dname %s seen before according to bloom filter", dname.full);
             
             // dname seen before according to bloom filter
             // update the dnames map:
@@ -180,7 +171,7 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
             if (dnamep) {
                 *dnamep += 1;
             } else {
-                uint64_t new_value = 1;
+                uint64_t new_value = BLOOM_THRESHOLD + 1;
                 if (bpf_map_update_elem(dnames, dname.full, &new_value, 0) < 0) {
                     bpf_printk("Failed to insert dname %s", dname.full);
                 }
@@ -194,28 +185,36 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
             }
 		} else {
 
-            // first time we observe this dname, update the bloom filter:
+            // not enough observations to pass the threshold yet,
+            // update the counting bloom filter
             
-			uint8_t one = 1;
-			//uint8_t newv1 = *r1 | v1;
-			//uint8_t newv2 = *r2 | v2;
-			//uint8_t newv3 = *r3 | v3;
-			//uint8_t newv4 = *r4 | v4;
-			//uint8_t newv5 = *r5 | v5;
-			//uint8_t newv6 = *r6 | v6;
-			
-			bpf_map_update_elem(&dnames_bloom, &k1, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &k2, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &k3, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &k4, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &k5, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &k6, &one, BPF_ANY);
-
-			// update diagnostics
+            // Before increasing the counting bloom filter, check whether this
+            // is the first occurrence and we thus need to increase the bloom
+            // filter element count in the diagnostics
             uint32_t diag_index = DIAG_BLOOMCOUNT;
 			uint64_t *bloomcount = bpf_map_lookup_elem(&diagnostics, &diag_index);
-			if (bloomcount) {
+			if (bloomcount) { // satisfy the verifier
+                if (*r1 == 0 ||
+                    *r2 == 0 ||
+                    *r3 == 0 ||
+                    *r4 == 0 ||
+                    *r5 == 0 ||
+                    *r6 == 0)
 				*bloomcount += 1;
+            }
+
+            // Now, increase the right counters in the bloom filter, while
+            // checking for (and keep track of) overflows
+            
+            diag_index = DIAG_OVERFLOW;
+			uint64_t *overflowcount = bpf_map_lookup_elem(&diagnostics, &diag_index);
+            if (overflowcount) {
+                if (*r1 == 255)  *overflowcount += 1; else *r1 += 1;
+                if (*r2 == 255)  *overflowcount += 1; else *r2 += 1;
+                if (*r3 == 255)  *overflowcount += 1; else *r3 += 1;
+                if (*r4 == 255)  *overflowcount += 1; else *r4 += 1;
+                if (*r5 == 255)  *overflowcount += 1; else *r5 += 1;
+                if (*r6 == 255)  *overflowcount += 1; else *r6 += 1;
             }
 		}
 	}
