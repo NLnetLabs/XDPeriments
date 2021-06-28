@@ -158,7 +158,11 @@ void pretty_dname(char* dname)
 	while (i < 255) {
         len = dname[i];
         if (len == 0) break;
-        printf(".");
+
+        // do not print a . for the first length byte
+        if (i > 0)
+            printf(".");
+
         for (int j = 0; j < len; j++) {
             i++;
             if (isprint((int)dname[i]))
@@ -170,7 +174,7 @@ void pretty_dname(char* dname)
         i++;
     }
 }
-int print_dnames(int dnames_fd, uint8_t af)
+int print_dnames(int dnames_fd) //, uint8_t af)
 {
 	char key[255] = { 0 };
 	void *keyp = &key, *prev_keyp = NULL;
@@ -183,7 +187,7 @@ int print_dnames(int dnames_fd, uint8_t af)
             count += counts[i];
         }
         if (count > 0) {
-            printf("dname{af=\"%i\", dname=\"", af);
+            printf("dname{dname=\"");
             pretty_dname(key);
             printf("\"} %ld\n", count);
         }
@@ -194,6 +198,32 @@ int print_dnames(int dnames_fd, uint8_t af)
 	return 0;
 
 }
+
+int print_tlds(int tlds_fd)
+{
+	char key[9] = { 0 };
+	void *keyp = &key, *prev_keyp = NULL;
+	uint64_t counts[8];
+    while (!bpf_map_get_next_key(tlds_fd, prev_keyp, keyp)) {
+        bpf_map_lookup_elem(tlds_fd, &key, counts);
+
+        uint64_t count = 0;
+        for (int i = 0; i < 8; i++) {
+            count += counts[i];
+        }
+        if (count > 0) {
+            printf("tld{tld=\"%s\"} %ld\n", key, count);
+        }
+
+        prev_keyp = keyp;
+    }
+
+	return 0;
+
+}
+
+
+
 
 int main(int argc, char **argv)
 {
@@ -234,15 +264,17 @@ int main(int argc, char **argv)
 	struct bpf_map_info rcodes6;
 	struct bpf_map_info response_sizes4;
 	struct bpf_map_info response_sizes6;
-	struct bpf_map_info dnames4;
-	struct bpf_map_info dnames6;
+	struct bpf_map_info dnames;
+
+	struct bpf_map_info tlds;
 
 	char *rcodes_v4_fn = "/sys/fs/bpf/tc/globals/rcodes_v4";
 	char *rcodes_v6_fn = "/sys/fs/bpf/tc/globals/rcodes_v6";
 	char *response_sizes_v4_fn = "/sys/fs/bpf/tc/globals/response_sizes_v4";
 	char *response_sizes_v6_fn = "/sys/fs/bpf/tc/globals/response_sizes_v6";
-	char *dnames_v4_fn = "/sys/fs/bpf/tc/globals/dnames_v4";
-	char *dnames_v6_fn = "/sys/fs/bpf/tc/globals/dnames_v6";
+	char *dnames_fn = "/sys/fs/bpf/tc/globals/dnames";
+
+	char *tlds_fn = "/sys/fs/bpf/tc/globals/tlds";
 
 	uint32_t rcodes_v4_info = sizeof(rcodes4), rcodes_v4_len = sizeof(rcodes4);
 	uint32_t rcodes_v6_info = sizeof(rcodes6), rcodes_v6_len = sizeof(rcodes6);
@@ -252,10 +284,12 @@ int main(int argc, char **argv)
 	uint32_t response_sizes_v6_info = sizeof(response_sizes4), response_sizes_v6_len = sizeof(response_sizes6);
 	int response_sizes_v4_fd, response_sizes_v6_fd;
 
+	uint32_t dnames_info = sizeof(dnames), dnames_len = sizeof(dnames);
+	int dnames_fd;
 
-	uint32_t dnames_v4_info = sizeof(dnames4), dnames_v4_len = sizeof(dnames4);
-	uint32_t dnames_v6_info = sizeof(dnames6), dnames_v6_len = sizeof(dnames6);
-	int dnames_v4_fd, dnames_v6_fd;
+	uint32_t tlds_info = sizeof(tlds), tlds_len = sizeof(tlds);
+	int tlds_fd;
+
 
 	if ((rcodes_v4_fd = bpf_obj_get(rcodes_v4_fn)) < 0)
 		fprintf(stderr, "Error opening %s: %s", rcodes_v4_fn, strerror(errno));
@@ -277,23 +311,23 @@ int main(int argc, char **argv)
 	else if (bpf_obj_get_info_by_fd(response_sizes_v6_fd, &response_sizes_v6_info, &response_sizes_v6_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , response_sizes_v6_fn, strerror(errno));
 
-	else if ((dnames_v4_fd = bpf_obj_get(dnames_v4_fn)) < 0)
-		fprintf(stderr, "Error opening %s: %s", dnames_v4_fn, strerror(errno));
-	else if (bpf_obj_get_info_by_fd(dnames_v4_fd, &dnames_v4_info, &dnames_v4_len))
-		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , dnames_v4_fn, strerror(errno));
+	else if ((dnames_fd = bpf_obj_get(dnames_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", dnames_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(dnames_fd, &dnames_info, &dnames_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , dnames_fn, strerror(errno));
 
-	else if ((dnames_v6_fd = bpf_obj_get(dnames_v6_fn)) < 0)
-		fprintf(stderr, "Error opening %s: %s", dnames_v6_fn, strerror(errno));
-	else if (bpf_obj_get_info_by_fd(dnames_v6_fd, &dnames_v6_info, &dnames_v6_len))
-		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , dnames_v6_fn, strerror(errno));
+	else if ((tlds_fd = bpf_obj_get(tlds_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", tlds_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(tlds_fd, &tlds_info, &tlds_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , tlds_fn, strerror(errno));
 
 	else {
 		print_rcodes(rcodes_v4_fd, 4);
 		print_rcodes(rcodes_v6_fd, 6);
 		print_response_sizes(response_sizes_v4_fd, 4);
 		print_response_sizes(response_sizes_v6_fd, 6);
-		print_dnames(dnames_v4_fd, 4);
-		print_dnames(dnames_v6_fd, 6);
+		print_dnames(dnames_fd);
+		print_tlds(tlds_fd);
 	}
 
 
