@@ -6,23 +6,8 @@
 #include "tc_stats.h"
 #include "murmur3.c"
 
-#define LOAD_DNAME(n) {\
-    if (dname_len >= n) {\
-        bpf_skb_load_bytes(skb, offset, to, n);\
-        offset += n;\
-        to += n;\
-        dname_len -= n;\
-    }\
-}
-
-//struct bpf_elf_map jmp_map SEC("maps") = {
-//        .type           = BPF_MAP_TYPE_PROG_ARRAY,
-//        .id             = 1,
-//        .size_key       = sizeof(uint32_t),
-//        .size_value     = sizeof(uint32_t),
-//        .pinning        = PIN_GLOBAL_NS,
-//        .max_elem       = 1,
-//};
+#define DIAG_BLOOMCOUNT 0   // number of elements tracked by the bloom filter
+#define DIAG_HIT 1          // number of hits / successful lookups
 
 static __always_inline
 int update_stats(
@@ -35,18 +20,14 @@ int update_stats(
 	uint64_t* current_rcode_count = bpf_map_lookup_elem(rcodes, &rcode);
 	if (current_rcode_count) {
 		*current_rcode_count += 1;
-		//bpf_printk("rcodes %i seen: %i\n", rcode, *current_rcode_count);
 	}
 
 	uint32_t size_key = __bpf_ntohs(udp->len);
-	//bpf_printk("udp->len: %i", size_key);
 	uint64_t* current_size_count = bpf_map_lookup_elem(response_sizes, &size_key);
 	if (current_size_count) {
 		*current_size_count += 1;
-		//bpf_printk("size %i seen: %i", size_key, *current_size_count);
 	}
-	
-    //return TC_ACT_OK;
+
     return 0;
 }
 
@@ -80,7 +61,6 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     uint8_t i;
     for (i = 0; i < 128; i++) {
         if (c->pos + 1 > c->end) {
-            bpf_printk("early return 1");
             return res->len;
         }
 
@@ -92,14 +72,13 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
         tld_offset = res->len;
 
         if (c->pos + labellen + 1 > c->end) {
-            bpf_printk("early return 2");
             return res->len;
         }
         res->len += labellen + 1;
         c->pos += labellen + 1;
     }
 
-    // use LOAD_DNAME to copy 64/32/16 etc bytes
+    // copy the dname in chunks of 64/32/16 etc bytes
 
     void* to= res->full;
     uint32_t dname_len = res->len;
@@ -113,8 +92,6 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     COPY_DNAME(skb, offset, to, dname_len, 1);
 
 
-    bpf_printk("dname len: %i", res->len);
-
     // now copy the .tld
     int tld_len = res->len - tld_offset;
 
@@ -122,6 +99,7 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
         bpf_skb_load_bytes(skb, offset - tld_len + 1, res->tld, 10);
     }
 
+    // TODO make this an if-else instead of separate if's
     COPY_TLD(skb, offset, res->tld, tld_len, 10); 
     COPY_TLD(skb, offset, res->tld, tld_len, 9); 
     COPY_TLD(skb, offset, res->tld, tld_len, 8); 
@@ -131,8 +109,6 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     COPY_TLD(skb, offset, res->tld, tld_len, 4); 
     COPY_TLD(skb, offset, res->tld, tld_len, 3); 
     
-    //bpf_printk("returning full: %s", &res->full);
-    //bpf_printk("returning tld: %s", &res->tld);
     return res->len;
 }
 
@@ -140,8 +116,9 @@ static __always_inline
 int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff* skb)
 {
         struct dname dname = {0};
-        
         size_t len = parse_dname(&dname, c, skb);
+
+        // update TLDs map
 		uint64_t *tld_p = bpf_map_lookup_elem(&tlds, dname.tld);
         if (tld_p) {
             *tld_p += 1;
@@ -155,92 +132,93 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
         }
 
 
-		uint64_t *dnamep = bpf_map_lookup_elem(dnames, dname.full);
-		if (dnamep) {
-			*dnamep += 1;
-			//bpf_printk("existing dname %s, value %i", &dname, *dnamep);
-		} else {
-			bpf_printk("new dname %s, inserting..", &dname);
-			uint64_t new_value = 1;
-			if (bpf_map_update_elem(dnames, dname.full, &new_value, 0) < 0) {
-                bpf_printk("error trying to insert new dname");
-            } else {
-                //bpf_printk("inserted, checking:");
-                uint64_t *dnamep2 = bpf_map_lookup_elem(dnames, dname.full);
-                if (!dnamep2) {
-                    bpf_printk("FAILed to insert dname");
-                } else {
-                    //bpf_printk("success: %i", *dnamep2);
-                }
-            }
-		}
-
-	// bloom filter experiments
+	// Calculate hashes for the bloom filter
 	uint32_t seed = 0;
-	//uint32_t h = murmur3_32((uint8_t *) dname.full, dname.len, seed);
-	//uint8_t key = dname.full;
-	//size_t len = dname.len;
 	len = 255; // FIXME using the actual dname.len does not work, for some reason
-	uint32_t h1 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 20);
+	uint32_t h1 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 27);
 	seed = 0x12345;
-	uint32_t h2 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 20);
+	uint32_t h2 = murmur3_32((uint8_t *)dname.full, len, seed) % (1 << 27);
 	//Kirsch-Mitzenmacher-Optimization: hash_i = hash1 + i x hash2
-	uint32_t h3 = (h1 + 3 * h2) % (1 << 20);
-	uint32_t h4 = (h1 + 4 * h2) % (1 << 20);
-	uint32_t h5 = (h1 + 5 * h2) % (1 << 20);
-	uint32_t h6 = (h1 + 6 * h2) % (1 << 20);
-	//bpf_printk("hash: %x", h1);
-	//bpf_printk("hash: %x", h2);
-	//bpf_printk("hash: %x", h3);
-	//bpf_printk("hash: %x", h4);
-	//bpf_printk("hash: %x", h5);
-	//bpf_printk("hash: %x", h6);
+	uint32_t h3 = (h1 + 3 * h2) % (1 << 27);
+	uint32_t h4 = (h1 + 4 * h2) % (1 << 27);
+	uint32_t h5 = (h1 + 5 * h2) % (1 << 27);
+	uint32_t h6 = (h1 + 6 * h2) % (1 << 27);
+	//bpf_printk("hashes: %x %x %x", h1, h2, h3);
+	//bpf_printk("        %x %x %x", h4, h5, h6);
 
-	// have we seen this before? if so, start counting in the 'real' map
-	//uint8_t *r = bpf_map_lookup_elem(&dnames_bloom, &h1);
-	//bpf_printk("h1 value: %i", *(uint8_t *)(bpf_map_lookup_elem(&dnames_bloom, &h1)));
+	uint32_t k1 = h1; // >> 8; uint8_t v1 = h1 & 0xff;
+	uint32_t k2 = h2; // >> 8; uint8_t v2 = h2 & 0xff;
+	uint32_t k3 = h3; // >> 8; uint8_t v3 = h3 & 0xff;
+	uint32_t k4 = h4; // >> 8; uint8_t v4 = h4 & 0xff;
+	uint32_t k5 = h5; // >> 8; uint8_t v5 = h5 & 0xff;
+	uint32_t k6 = h6; // >> 8; uint8_t v6 = h6 & 0xff;
+
+	//bpf_printk("keys: %x %x %x", k1, k2, k3);
+	//bpf_printk("      %x %x %x", k4, k5, k6);
 	
-	uint8_t *r1 = bpf_map_lookup_elem(&dnames_bloom, &h1);
-	uint8_t *r2 = bpf_map_lookup_elem(&dnames_bloom, &h2);
-	uint8_t *r3 = bpf_map_lookup_elem(&dnames_bloom, &h3);
-	uint8_t *r4 = bpf_map_lookup_elem(&dnames_bloom, &h4);
-	uint8_t *r5 = bpf_map_lookup_elem(&dnames_bloom, &h5);
-	uint8_t *r6 = bpf_map_lookup_elem(&dnames_bloom, &h6);
+	uint8_t *r1 = bpf_map_lookup_elem(&dnames_bloom, &k1);
+	uint8_t *r2 = bpf_map_lookup_elem(&dnames_bloom, &k2);
+	uint8_t *r3 = bpf_map_lookup_elem(&dnames_bloom, &k3);
+	uint8_t *r4 = bpf_map_lookup_elem(&dnames_bloom, &k4);
+	uint8_t *r5 = bpf_map_lookup_elem(&dnames_bloom, &k5);
+	uint8_t *r6 = bpf_map_lookup_elem(&dnames_bloom, &k6);
 	if (r1 && r2 && r3 && r4 && r5 && r6) { // always true because we're working with a _ARRAY
 		if (*r1 && *r2 && *r3 && *r4 && *r5 && *r6) {
-			bpf_printk("dname %s seen before according to bloom filter");
+		//bpf_printk("%x %x %x", *r1, *r2, *r3);
+		//bpf_printk("%x %x %x", *r4, *r5, *r6);
+		//if ((*r1 & v1) == v1 &&
+		//	(*r2 & v2) == v2 &&
+		//	(*r3 & v3) == v3 &&
+		//	(*r4 & v4) == v4 &&
+		//	(*r5 & v5) == v5 &&
+		//	(*r6 & v6) == v6) {
+			//bpf_printk("dname %s seen before according to bloom filter", dname.full);
+            
+            // dname seen before according to bloom filter
+            // update the dnames map:
+            uint64_t *dnamep = bpf_map_lookup_elem(dnames, dname.full);
+            if (dnamep) {
+                *dnamep += 1;
+            } else {
+                uint64_t new_value = 1;
+                if (bpf_map_update_elem(dnames, dname.full, &new_value, 0) < 0) {
+                    bpf_printk("Failed to insert dname %s", dname.full);
+                }
+            }
+
+			//update diagnostics
+            uint32_t diag_index = DIAG_HIT;
+			uint64_t *bloomcount = bpf_map_lookup_elem(&diagnostics, &diag_index);
+			if (bloomcount) {
+				*bloomcount += 1;
+            }
 		} else {
-			bpf_printk("new dname %s, updating bloom filter", dname.full);
+
+            // first time we observe this dname, update the bloom filter:
+            
 			uint8_t one = 1;
-			bpf_map_update_elem(&dnames_bloom, &h1, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &h2, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &h3, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &h4, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &h5, &one, BPF_ANY);
-			bpf_map_update_elem(&dnames_bloom, &h6, &one, BPF_ANY);
+			//uint8_t newv1 = *r1 | v1;
+			//uint8_t newv2 = *r2 | v2;
+			//uint8_t newv3 = *r3 | v3;
+			//uint8_t newv4 = *r4 | v4;
+			//uint8_t newv5 = *r5 | v5;
+			//uint8_t newv6 = *r6 | v6;
+			
+			bpf_map_update_elem(&dnames_bloom, &k1, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &k2, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &k3, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &k4, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &k5, &one, BPF_ANY);
+			bpf_map_update_elem(&dnames_bloom, &k6, &one, BPF_ANY);
+
+			// update diagnostics
+            uint32_t diag_index = DIAG_BLOOMCOUNT;
+			uint64_t *bloomcount = bpf_map_lookup_elem(&diagnostics, &diag_index);
+			if (bloomcount) {
+				*bloomcount += 1;
+            }
 		}
 	}
-	
-/*
-	if (bpf_map_lookup_elem(&dnames_bloom, &h1) &&
-			bpf_map_lookup_elem(&dnames_bloom, &h2) &&
-			bpf_map_lookup_elem(&dnames_bloom, &h3) &&
-			bpf_map_lookup_elem(&dnames_bloom, &h4) &&
-			bpf_map_lookup_elem(&dnames_bloom, &h5) &&
-			bpf_map_lookup_elem(&dnames_bloom, &h6)) {
-		bpf_printk("dname %s seen before according to bloom filter");
-	} else {
-		bpf_printk("new dname %s, updating bloom filter");
-		//// now update dnames_bloom:
-		uint8_t one = 1;
-		bpf_map_update_elem(&dnames_bloom, &h1, &one, BPF_ANY);
-		bpf_map_update_elem(&dnames_bloom, &h2, &one, BPF_ANY);
-		bpf_map_update_elem(&dnames_bloom, &h3, &one, BPF_ANY);
-		bpf_map_update_elem(&dnames_bloom, &h4, &one, BPF_ANY);
-		bpf_map_update_elem(&dnames_bloom, &h5, &one, BPF_ANY);
-		bpf_map_update_elem(&dnames_bloom, &h6, &one, BPF_ANY);
-	}
-*/
 
     return 0;
 }
@@ -273,7 +251,8 @@ int tc_stats_egress(struct __sk_buff *skb)
 
 		//bpf_printk("IPv6 DNS response\n");
 		update_stats(&rcodes_v6, &response_sizes_v6, udp, dns);
-        update_dnames(&dnames_v6, &c, skb);
+        //update_dnames(&dnames_v6, &c, skb);
+        update_dnames(&dnames, &c, skb);
 
 	} else if (eth_proto == __bpf_htons(ETH_P_IP)) {
         if (!(ipv4 = parse_iphdr(&c))
@@ -285,7 +264,8 @@ int tc_stats_egress(struct __sk_buff *skb)
 
 		//bpf_printk("IPv4 DNS response\n");
 		update_stats(&rcodes_v4, &response_sizes_v4, udp, dns);
-        update_dnames(&dnames_v4, &c, skb);
+        //update_dnames(&dnames_v4, &c, skb);
+        update_dnames(&dnames, &c, skb);
 	}
     return TC_ACT_OK;
 }

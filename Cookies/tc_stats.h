@@ -39,22 +39,29 @@ struct bpf_elf_map SEC("maps") response_sizes_v6 = {
     .pinning = PIN_GLOBAL_NS
 };
 
-struct bpf_elf_map SEC("maps") dnames_v4 = {
-    .type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
-    //.type = BPF_MAP_TYPE_PERCPU_HASH,
+struct bpf_elf_map SEC("maps") dnames = {
+    .type = BPF_MAP_TYPE_PERCPU_HASH,
     .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
     .size_value = sizeof(uint64_t),
-    .max_elem = 1 * 1 * 1000,
+    .max_elem = 1 * 1000 * 1000,
     .pinning = PIN_GLOBAL_NS
 };
-struct bpf_elf_map SEC("maps") dnames_v6 = {
-    .type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
-    //.type = BPF_MAP_TYPE_PERCPU_HASH,
-    .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
-    .size_value = sizeof(uint64_t),
-    .max_elem = 1 * 1 * 1000,
-    .pinning = PIN_GLOBAL_NS
-};
+//struct bpf_elf_map SEC("maps") dnames_v4 = {
+//    //.type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
+//    .type = BPF_MAP_TYPE_PERCPU_HASH,
+//    .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
+//    .size_value = sizeof(uint64_t),
+//    .max_elem = 10 * 1000 * 1000,
+//    .pinning = PIN_GLOBAL_NS
+//};
+//struct bpf_elf_map SEC("maps") dnames_v6 = {
+//    .type = BPF_MAP_TYPE_LRU_PERCPU_HASH,
+//    //.type = BPF_MAP_TYPE_PERCPU_HASH,
+//    .size_key = 255, //TODO make this constant/configurable and consistent with tc_stats.c
+//    .size_value = sizeof(uint64_t),
+//    .max_elem = 1 * 1 * 1000,
+//    .pinning = PIN_GLOBAL_NS
+//};
 
 // before we add dnames to our PER_CPU hashmap, we track them in a bloom filter
 // to prevent single-timers to be wasting space in our hashmap.
@@ -70,11 +77,15 @@ struct bpf_elf_map SEC("maps") dnames_v6 = {
 //  m = - (n * log(e)) / (log(2)^2)
 //      ==~ 958_506 ==~ 1M
 
+// or: https://hur.st/bloomfilter/?n=&p=0.0001&m=4G&k=6
+// with 2^29 x 1 uint8 we have m==4G _bits_ for the filter
+// for error prob 1 in 10_000, and 6 hashes, we can track ~160M items
+
 struct bpf_elf_map SEC("maps") dnames_bloom = {
     .type = BPF_MAP_TYPE_ARRAY,
     .size_key = sizeof(uint32_t),
     .size_value = 1,
-    .max_elem = 1 << 30,
+    .max_elem = 1 << 27,
     .pinning = PIN_GLOBAL_NS
 };
 
@@ -90,4 +101,13 @@ struct bpf_elf_map SEC("maps") tlds = {
     .size_value = sizeof(uint64_t),
     .max_elem = 1 * 1 * 1000,
     .pinning = PIN_GLOBAL_NS
+};
+
+
+struct bpf_elf_map SEC("maps") diagnostics = {
+	.type = BPF_MAP_TYPE_ARRAY,
+	.size_key = sizeof(uint32_t),
+	.size_value = sizeof(uint64_t),
+	.max_elem = 5,
+	.pinning = PIN_GLOBAL_NS
 };
