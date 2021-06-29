@@ -9,6 +9,8 @@
 #include <bpf.h>
 #include <libbpf.h>
 
+#include "diagnostics.h"
+
 struct stats_qtype {
     uint32_t A;
     uint32_t AAAA;
@@ -68,6 +70,12 @@ struct key4_type {
           );\
     }
 
+#define PRINT_DIAG(metric, val) {\
+    printf( "%s{%s=\"%i\"} %ld\n",\
+            metric,\
+            val\
+          );\
+    }
 int print_stats(int map6_fd, int map4_fd) 
 {
 	struct key6_type key6 = { 0 };
@@ -223,6 +231,25 @@ int print_tlds(int tlds_fd)
 }
 
 
+int print_diagnostics(int diagnostics_fd)
+{
+	int diag_index;
+	uint64_t value = 0; 	
+
+    diag_index = DIAG_BLOOMCOUNT;
+	bpf_map_lookup_elem(diagnostics_fd, &diag_index, &value);
+    printf("diag_bloomfilter_elements %ld\n", value);
+
+    diag_index = DIAG_HIT;
+	bpf_map_lookup_elem(diagnostics_fd, &diag_index, &value);
+    printf("diag_bloomfilter_hits %ld\n", value);
+
+    diag_index = DIAG_OVERFLOW;
+	bpf_map_lookup_elem(diagnostics_fd, &diag_index, &value);
+    printf("diag_bloomfilter_overflows %ld\n", value);
+
+	return 0;
+}
 
 
 int main(int argc, char **argv)
@@ -267,6 +294,7 @@ int main(int argc, char **argv)
 	struct bpf_map_info dnames;
 
 	struct bpf_map_info tlds;
+	struct bpf_map_info diagnostics;
 
 	char *rcodes_v4_fn = "/sys/fs/bpf/tc/globals/rcodes_v4";
 	char *rcodes_v6_fn = "/sys/fs/bpf/tc/globals/rcodes_v6";
@@ -275,6 +303,7 @@ int main(int argc, char **argv)
 	char *dnames_fn = "/sys/fs/bpf/tc/globals/dnames";
 
 	char *tlds_fn = "/sys/fs/bpf/tc/globals/tlds";
+	char *diagnostics_fn = "/sys/fs/bpf/tc/globals/diagnostics";
 
 	uint32_t rcodes_v4_info = sizeof(rcodes4), rcodes_v4_len = sizeof(rcodes4);
 	uint32_t rcodes_v6_info = sizeof(rcodes6), rcodes_v6_len = sizeof(rcodes6);
@@ -289,6 +318,9 @@ int main(int argc, char **argv)
 
 	uint32_t tlds_info = sizeof(tlds), tlds_len = sizeof(tlds);
 	int tlds_fd;
+
+	uint32_t diagnostics_info = sizeof(diagnostics), diagnostics_len = sizeof(diagnostics);
+	int diagnostics_fd;
 
 
 	if ((rcodes_v4_fd = bpf_obj_get(rcodes_v4_fn)) < 0)
@@ -321,6 +353,11 @@ int main(int argc, char **argv)
 	else if (bpf_obj_get_info_by_fd(tlds_fd, &tlds_info, &tlds_len))
 		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , tlds_fn, strerror(errno));
 
+	else if ((diagnostics_fd = bpf_obj_get(diagnostics_fn)) < 0)
+		fprintf(stderr, "Error opening %s: %s", diagnostics_fn, strerror(errno));
+	else if (bpf_obj_get_info_by_fd(diagnostics_fd, &diagnostics_info, &diagnostics_len))
+		fprintf(stderr, "Cannot get info from \"%s\": %s\n" , diagnostics_fn, strerror(errno));
+
 	else {
 		print_rcodes(rcodes_v4_fd, 4);
 		print_rcodes(rcodes_v6_fd, 6);
@@ -328,6 +365,7 @@ int main(int argc, char **argv)
 		print_response_sizes(response_sizes_v6_fd, 6);
 		print_dnames(dnames_fd);
 		print_tlds(tlds_fd);
+		print_diagnostics(diagnostics_fd);
 	}
 
 

@@ -4,12 +4,10 @@
 #include <bpf_helpers.h>      /* for SEC */
 #include "bpf-dns.h"
 #include "tc_stats.h"
+#include "diagnostics.h"
 #include "murmur3.c"
 
 #define BLOOM_THRESHOLD 10  // minimum observations before adding to dnames map
-#define DIAG_BLOOMCOUNT 0   // number of elements tracked by the bloom filter
-#define DIAG_HIT 1          // number of hits / successful lookups
-#define DIAG_OVERFLOW 2     // track overflows of the bloom uint8_t
 
 static __always_inline
 int update_stats(
@@ -165,7 +163,7 @@ int update_dnames(struct bpf_elf_map* dnames, struct cursor* c, struct __sk_buff
 
             //bpf_printk("dname %s seen before according to bloom filter", dname.full);
             
-            // dname seen before according to bloom filter
+            // dname seen at least BLOOM_THRESHOLD times before,
             // update the dnames map:
             uint64_t *dnamep = bpf_map_lookup_elem(dnames, dname.full);
             if (dnamep) {
