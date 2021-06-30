@@ -83,6 +83,7 @@ int parse_dname(struct dname *res, struct cursor *c, struct __sk_buff *skb)
     void* to= res->full;
     uint32_t dname_len = res->len;
 
+    COPY_DNAME(skb, offset, to, dname_len, 128);
     COPY_DNAME(skb, offset, to, dname_len, 64);
     COPY_DNAME(skb, offset, to, dname_len, 32);
     COPY_DNAME(skb, offset, to, dname_len, 16);
