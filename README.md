@@ -1,11 +1,12 @@
 # XDPeriments
-Example programs fot the Journeying into XDP blogs
+Example programs for the Journeying into XDP blogs
 
 # Setup
 After cloning the repository:
 ```
 git submodule update --init
 cd libbpf/src
+(possibly apt install libelf-dev)
 make
 cd ../../Cookies
 make
