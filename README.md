@@ -6,7 +6,7 @@ After cloning the repository:
 ```
 git submodule update --init
 cd libbpf/src
-(possibly apt install libelf-dev)
+(possibly apt install libelf-dev and gcc-multilib)
 make
 cd ../../Cookies
 make
