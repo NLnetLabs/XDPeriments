@@ -21,7 +21,7 @@
 
 #define REPORT_DOMAIN "\x06report\x09nlnetlabs\x02nl\x00"
 #define OPT_CODE_EDER 65001 /* first experimental opt code from: RFC6891 */
-#define RANDOM_CHANCE 10 /* sampling rate of the EDER code in percentage*/
+#define RANDOM_CHANCE 50 /* sampling rate of the EDER code in percentage*/
 
 struct bpf_elf_map jmp_map SEC("maps") = {
         .type           = BPF_MAP_TYPE_PROG_ARRAY,
@@ -128,9 +128,9 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 	 		return TC_ACT_OK; /* Not DNS */
 
 		// skip a percentage of all the query responses
-		uint32_t random = bpf_get_prandom_u32();
-		if (random > (sizeof(uint32_t)/RANDOM_CHANCE))
-			return TC_ACT_OK;
+		//uint32_t random = bpf_get_prandom_u32();
+		//if (random > (sizeof(uint32_t)/(100/RANDOM_CHANCE)))
+		//	return TC_ACT_OK;
 
 		uint16_t to_grow = 4 + sizeof(REPORT_DOMAIN);
 		uint16_t option[2] = { __bpf_ntohs(65001) // experimental opt
