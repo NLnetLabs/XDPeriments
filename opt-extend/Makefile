@@ -2,7 +2,7 @@ CC=clang
 LDFLAGS=-L../libbpf/src
 LIBS=-lbpf -lelf -lz
 
-DEV=lo
+DEV=eth0
 
 CFLAGS=-O3 -Wall -Werror -I../libbpf/src -D'DEFAULT_IFACE="$(DEV)"'
 
@@ -25,7 +25,7 @@ clsact:
 
 load: clsact $(BPF_PROG) $(XDP_PROG)
 	sudo /sbin/tc filter del dev $(DEV) egress || true
-	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(BPF_PROG) sec tc-edns0-add-expirimental-opt-egress
+	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(BPF_PROG)
 
 unload:
 	sudo ip link set dev $(DEV) xdpgeneric off || true
@@ -34,7 +34,6 @@ unload:
 	rm -f clsact
 
 show:
-	sudo ip link show dev $(DEV)
 	/sbin/tc filter show dev $(DEV) egress
 
 debug:
