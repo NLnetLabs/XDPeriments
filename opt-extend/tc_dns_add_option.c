@@ -57,7 +57,6 @@ int skip_resource_records(struct __sk_buff *skb)
 		bpf_tail_call(skb, &jmp_map, 0);
 		bpf_printk("bpf_tail_call failed\n");
 	} else {
-		bpf_printk("have all answers & authoritative\n");
 		bpf_printk("to_grow: %d\n", c.end - c.pos);
 		rr->rdata_len = __bpf_htons(__bpf_ntohs(rr->rdata_len) + (c.end - c.pos));
 	}
@@ -128,9 +127,13 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 	 		return TC_ACT_OK; /* Not DNS */
 
 		// skip a percentage of all the query responses
-		//uint32_t random = bpf_get_prandom_u32();
-		//if (random > (sizeof(uint32_t)/(100/RANDOM_CHANCE)))
-		//	return TC_ACT_OK;
+		uint32_t random = bpf_get_prandom_u32();
+		bpf_printk("RANDOM: %u\n", random);
+		if (random % 100 > RANDOM_CHANCE) {
+			return TC_ACT_OK;
+		}
+
+		bpf_printk("I AM HERE!\n");
 
 		uint16_t to_grow = 4 + sizeof(REPORT_DOMAIN);
 		uint16_t option[2] = { __bpf_ntohs(65001) // experimental opt
