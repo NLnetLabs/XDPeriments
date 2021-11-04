@@ -88,6 +88,12 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 		||  !__bpf_ntohs(dns->arcount))
 	 		return TC_ACT_OK; /* Not DNS with OPT RR*/
 
+		// skip a percentage of all the query responses
+		uint32_t random = bpf_get_prandom_u32();
+		bpf_printk("RANDOM: %u\n", random);
+		if (random % 100 > RANDOM_CHANCE) {
+			return TC_ACT_OK;
+		}
 		bpf_printk("IPv6 DNS response\n");
 
 		uint16_t to_grow = 4 + sizeof(REPORT_DOMAIN);
@@ -132,8 +138,6 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 		if (random % 100 > RANDOM_CHANCE) {
 			return TC_ACT_OK;
 		}
-
-		bpf_printk("I AM HERE!\n");
 
 		uint16_t to_grow = 4 + sizeof(REPORT_DOMAIN);
 		uint16_t option[2] = { __bpf_ntohs(65001) // experimental opt
