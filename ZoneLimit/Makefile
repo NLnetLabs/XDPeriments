@@ -1,7 +1,8 @@
-CC=clang
-CFLAGS=-O2 -Wall -Werror -I ../libbpf/src -D'DEBUG=1'
-
 DEV=eno1
+
+CC=clang
+CFLAGS=-O2 -Wall -Werror -I ../libbpf/src -D'DEBUG=1' -D'DEFAULT_IFACE="$(DEV)"'
+
 
 XDP_PROG=xdp_zonelimit.o
 

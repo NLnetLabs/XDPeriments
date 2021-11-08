@@ -1,3 +1,4 @@
+#include <net/if.h>
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -18,6 +19,13 @@ int print_usage(int ret_code, const char *progname)
 	           ,progname, progname, progname);
 	return ret_code;
 }
+
+#ifndef DEFAULT_IFACE
+#define DEFAULT_IFACE "eth0"
+#endif
+
+#define JMP_TBL "jmp_table"
+#define ZONELIMIT_DNAMES "zonelimit_dnames"
 
 #define NAMELEN 200
 
@@ -109,17 +117,81 @@ int list_dnames(int argc, char **argv, int map_fd)
 
 int main(int argc, char **argv)
 {
-    char *fn = "/sys/fs/bpf/zonelimit_dnames";
+	struct bpf_map *dname_map = NULL;
+    const char *dname_map_fn = "/sys/fs/bpf/zonelimit_dnames";
+
     int map_fd;
     struct bpf_map_info info;
     uint32_t info_len = sizeof(info);
 
+	const char *ifname = DEFAULT_IFACE;
+	unsigned int ifindex = 0;
+
+	struct bpf_program *prog = NULL;
+	const char *xdp_program_name = NULL;
+	struct bpf_object  *obj  = NULL;
+	int fd = -1, jmp_tbl_fd = -1;
+	uint32_t key = 0;
+
     if (argc < 2)
         return print_usage(EXIT_SUCCESS, argv[0]);
-    else if ((map_fd = bpf_obj_get(fn)) < 0)
-        fprintf(stderr, "Failed to open %s: %s\n", fn, strerror(errno));
+    else if ((map_fd = bpf_obj_get(dname_map_fn)) < 0)
+        fprintf(stderr, "Failed to open %s: %s\n", dname_map_fn, strerror(errno));
     else if(bpf_obj_get_info_by_fd(map_fd, &info, &info_len))
-        fprintf(stderr, "get_info fail for %s: %s\n", fn, strerror(errno));
+        fprintf(stderr, "get_info fail for %s: %s\n", dname_map_fn, strerror(errno));
+    else if(!strcmp(argv[1], "load")) {
+
+		if (!(ifindex = if_nametoindex(ifname)))
+			fprintf(stderr, "ERROR: error finding device %s: %s\n"
+					, ifname, strerror(errno));
+
+		else if (!(obj = bpf_object__open_file("xdp_zonelimit.o", NULL))
+				|| libbpf_get_error(obj))
+			fprintf(stderr, "ERROR: opening BPF object file failed\n");
+
+		else if (!(dname_map = bpf_object__find_map_by_name(obj, ZONELIMIT_DNAMES)))
+			fprintf(stderr, "ERROR: table " ZONELIMIT_DNAMES " not found\n");
+		else if (bpf_map__set_pin_path(dname_map, dname_map_fn))
+			fprintf(stderr, "ERROR: pinning " ZONELIMIT_DNAMES " to \"%s\"\n"
+					, dname_map_fn);
+
+		fprintf(stderr, "here 0\n");
+		if (bpf_object__load(obj))
+			fprintf(stderr, "ERROR: loading BPF object file failed\n");
+
+		fprintf(stderr, "here 1\n");
+		if ((jmp_tbl_fd = bpf_object__find_map_fd_by_name(obj, JMP_TBL)) < 0){
+			fprintf(stderr, "ERROR: table " JMP_TBL " not found\n");
+		} else {
+			fprintf(stderr,"2");
+			bpf_object__for_each_program(prog, obj) {
+				xdp_program_name = bpf_program__section_name(prog);
+
+				fd = bpf_program__fd(prog);
+				printf(JMP_TBL " entry: %d -> %s\n", key, xdp_program_name);
+				if (bpf_map_update_elem(jmp_tbl_fd, &key, &fd, BPF_ANY) < 0){
+					fprintf( stderr
+							, "ERROR: making " JMP_TBL " entry for %s\n"
+							, xdp_program_name);
+					fd = -1;
+					break;
+				}
+				key++;
+			}
+		}
+		if (fd < 0)
+			; /* earlier error */
+
+		else if (bpf_set_link_xdp_fd(ifindex, fd, 0))
+			fprintf(stderr, "ERROR: attaching xdp program to device\n");
+		else {
+			printf("%s successfully loaded and running on interface %s.\n"
+					, xdp_program_name, ifname);
+			printf("Press Ctrl-C to stop and unload.\n");
+			while (true)
+				sleep(60);
+		}
+	}
     else if(!strcmp(argv[1], "add"))
         return add_dname(argc, argv, map_fd);
     else if(!strcmp(argv[1], "list"))

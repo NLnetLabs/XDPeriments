@@ -31,7 +31,7 @@ struct dname {
 
 #define COPY_LABEL(dst, lbl, lbl_len, N) {\
     if (lbl_len >= N) {\
-        if ((void*)(lbl) + N > c->end) {\
+        if ((void*)(lbl) + N > c.end) {\
             return 0;\
         }\
         __builtin_memcpy(dst, lbl, N);\
@@ -49,21 +49,58 @@ struct key_type {
     char dname[NAMELEN];
 };
 
+struct bpf_map_def SEC("maps") jmp_table = {
+    .type = BPF_MAP_TYPE_PROG_ARRAY,
+    .key_size = sizeof(uint32_t),
+    .value_size = sizeof(uint32_t),
+    .max_entries = 3
+};
+
+#define CHECK_DNAME 0
+
+struct meta_data {
+	uint16_t eth_proto;
+	uint16_t ip_pos;
+	uint16_t dname_pos;
+	uint16_t unused;
+};
+
 struct bpf_map_def SEC("maps") zonelimit_dnames = {
     .type = BPF_MAP_TYPE_LPM_TRIE,
     .key_size = sizeof(struct bpf_lpm_trie_key) + NAMELEN,
     .value_size = sizeof(uint64_t),
-    .max_entries = 10 
+    .max_entries = 10,
+	.map_flags = BPF_F_NO_PREALLOC
 };
 
-static __always_inline
-int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
+//static __always_inline
+//int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
+
+SEC("xdp-check-dname")
+int check_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
 {
 
+	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
+
+	cursor_init(&c, ctx);
+	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+		return XDP_ABORTED;
+
+    //bpf_printk("jumped into CHECK_DNAME for eth %X, offset %i", md->eth_proto, md->dname_pos);
+	//bpf_printk("c->end - c->start: %i", c.end - c.pos);
+	//if (c.pos + md->dname_pos > c.end)
+	//	return XDP_ABORTED;
+
+	//if (md->dname_pos == 74)
+	//	bpf_printk("it's 74 alright");
+	c.pos = c.pos + (md->dname_pos & 0x7fff);
+	//c.pos += 74;
+
     void *offset1, *offset2, *offset3;
-    offset1 = c->pos;
-    offset2 = c->pos;
-    offset3 = c->pos;
+    offset1 = c.pos;
+    offset2 = c.pos;
+    offset3 = c.pos;
 
     uint8_t in_packet_len = 0;
     uint8_t i;
@@ -71,30 +108,30 @@ int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
     uint8_t labellen;
 
     for (i = 0; i < 5; i++) {
-        if (c->pos + 1 > c->end) {
-            return 1;
+        if (c.pos + 1 > c.end) {
+            return XDP_PASS;
         }
 
-        labellen = *(uint8_t*)c->pos;
+        labellen = *(uint8_t*)c.pos;
         if (labellen == 0)
             break;
 
         num_lbls += 1;
         offset3 = offset2;
         offset2 = offset1;
-        offset1 = c->pos;
+        offset1 = c.pos;
 
         //tld_offset = res->len;
 
-        if (c->pos + labellen + 1 > c->end) {
-            return 1;
+        if (c.pos + labellen + 1 > c.end) {
+            return XDP_PASS;
         }
         //res->len += labellen + 1;
         in_packet_len += labellen + 1;
-        c->pos += labellen + 1;
+        c.pos += labellen + 1;
     }
-    if (c->pos + 1 > c->end) {
-        return 1;
+    if (c.pos + 1 > c.end) {
+        return XDP_PASS;
     }
 
     struct key_type key = { .prefixlen = 0 };
@@ -123,6 +160,7 @@ int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
         COPY_LABEL(keyp, offset2, ll_2, 1);
     }
     
+    
     if (num_lbls >= 3) {
         // reset label offset for the next label
         uint8_t ll_3 = *(uint8_t*)offset3 + 1;
@@ -136,6 +174,7 @@ int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
         COPY_LABEL(keyp, offset3, ll_3, 1);
     }
     
+    
 
     key.prefixlen *= 8; // from bytes to bits
     uint64_t *value;
@@ -144,21 +183,22 @@ int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
         *value += 1;
     }
 
-    return 0;
+    return XDP_PASS;
 }
 
-static __always_inline
-int check_dname(struct cursor *c)
-{
-    //struct dname dname = {0};
-    parse_dname(c);
-    return 1;
-}
+//static __always_inline
+//int check_dname(struct cursor *c)
+//{
+//    //struct dname dname = {0};
+//    parse_dname(c);
+//    return 1;
+//}
 
 SEC("xdp-zonelimit")
 int xdp_zonelimit(struct xdp_md *ctx)
 {
 	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
 	struct ethhdr    *eth;
 	struct ipv6hdr   *ipv6;
 	struct iphdr     *ipv4;
@@ -166,8 +206,15 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	struct dnshdr    *dns;
 
 
-	cursor_init(&c, ctx);
+	if (bpf_xdp_adjust_meta(ctx, -(int)sizeof(struct meta_data)))
+		return XDP_PASS;
 
+	cursor_init(&c, ctx);
+	md = (void *)(long)ctx->data_meta;
+	if ((void *)(md + 1) > c.pos)
+		return XDP_PASS;
+
+	md->dname_pos = 0;
 	if (!(eth = parse_ethhdr(&c)))
 		return XDP_PASS;
 
@@ -179,8 +226,11 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 	||  !(dns = parse_dnshdr(&c)))
 	 		return XDP_PASS; /* Not DNS */
 
-        bpf_printk("got v6 DNS");
-        check_dname(&c);
+		md->eth_proto = ETH_P_IPV6;
+		md->dname_pos = c.pos - (void *)eth;
+        bpf_printk("got v6 DNS: %x", (ETH_P_IPV6));
+        //check_dname(&c);
+        bpf_tail_call(ctx, &jmp_table, CHECK_DNAME);
         bpf_printk("--------------------\n\n");
 
     } else if (eth->h_proto == __bpf_htons(ETH_P_IP)) {
@@ -191,7 +241,13 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 	||  !(dns = parse_dnshdr(&c)))
 	 		return XDP_PASS; /* Not DNS */
 
-        bpf_printk("got v4 DNS");
+        bpf_printk("got v4 DNS: %x", (ETH_P_IP));
+		md->eth_proto = ETH_P_IP;
+		md->dname_pos = c.pos - (void *)eth;
+        // XXX enabling on both v6 and v4 hits verifier limits if we track the
+        // last 3 labels. For the last 2 labels (so domain.tld), it works..
+        //check_dname(&c);
+        bpf_tail_call(ctx, &jmp_table, CHECK_DNAME);
         bpf_printk("--------------------\n\n");
 
 
