@@ -56,13 +56,18 @@ struct bpf_map_def SEC("maps") jmp_table = {
     .max_entries = 3
 };
 
-#define CHECK_DNAME 0
+#define CHECK_CACHE 0
+#define PARSE_DNAME 1
 
 struct meta_data {
 	uint16_t eth_proto;
-	uint16_t ip_pos;
+	//uint16_t ip_pos;
 	uint16_t dname_pos;
-	uint16_t unused;
+	uint8_t lbl_cnt;
+	uint16_t lbl1_offset;
+	uint16_t lbl2_offset;
+	uint16_t lbl3_offset;
+	//uint16_t unused;
 };
 
 struct bpf_map_def SEC("maps") zonelimit_dnames = {
@@ -76,8 +81,84 @@ struct bpf_map_def SEC("maps") zonelimit_dnames = {
 //static __always_inline
 //int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
 
-SEC("xdp-check-dname")
-int check_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
+SEC("xdp-check-cache")
+int check_cache(struct xdp_md *ctx)
+{
+	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
+
+	cursor_init(&c, ctx);
+	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+		return XDP_ABORTED;
+
+    struct key_type key = { .prefixlen = 0 };
+    void *keyp = &key.dname;
+
+    // first label (TLD)
+	void *offset1 = c.pos + (md->lbl1_offset & 0xff);
+	if (offset1 +1 > c.end)
+		return XDP_ABORTED;
+
+    uint8_t ll_1 = *(uint8_t*)offset1 + 1;
+    key.prefixlen += ll_1;
+
+    //COPY_LABEL(keyp, offset1, ll_1, 16);
+    //COPY_LABEL(keyp, offset1, ll_1, 8);
+    COPY_LABEL(keyp, offset1, ll_1, 4);
+    COPY_LABEL(keyp, offset1, ll_1, 2);
+    COPY_LABEL(keyp, offset1, ll_1, 1);
+
+
+    if (md->lbl_cnt >= 2) {
+        // reset label offset for the next label
+		void *offset2 = c.pos + (md->lbl2_offset & 0xff);
+		if (offset2 + 1 > c.end)
+			return XDP_ABORTED;
+
+        uint8_t ll_2 = *(uint8_t*)offset2 + 1;
+        key.prefixlen += ll_2;
+        //COPY_LABEL(keyp, offset2, ll_2, 64);
+        COPY_LABEL(keyp, offset2, ll_2, 32);
+        COPY_LABEL(keyp, offset2, ll_2, 16);
+        COPY_LABEL(keyp, offset2, ll_2, 8);
+        COPY_LABEL(keyp, offset2, ll_2, 4);
+        COPY_LABEL(keyp, offset2, ll_2, 2);
+        COPY_LABEL(keyp, offset2, ll_2, 1);
+    }
+    
+    
+    if (md->lbl_cnt >= 3) {
+        // reset label offset for the next label
+		void *offset3 = c.pos + (md->lbl3_offset & 0xff);
+		if (offset3 + 1 > c.end)
+			return XDP_ABORTED;
+
+        uint8_t ll_3 = *(uint8_t*)offset3 + 1;
+        key.prefixlen += ll_3;
+        //COPY_LABEL(keyp, offset3, ll_3, 64);
+        COPY_LABEL(keyp, offset3, ll_3, 32);
+        COPY_LABEL(keyp, offset3, ll_3, 16);
+        COPY_LABEL(keyp, offset3, ll_3, 8);
+        COPY_LABEL(keyp, offset3, ll_3, 4);
+        COPY_LABEL(keyp, offset3, ll_3, 2);
+        COPY_LABEL(keyp, offset3, ll_3, 1);
+    }
+    
+
+    key.prefixlen *= 8; // from bytes to bits
+    uint64_t *value;
+    if ((value = bpf_map_lookup_elem(&zonelimit_dnames, &key))) {
+        bpf_printk("matched on %s with prefixlen %i, value: %i", &key.dname, key.prefixlen, *value);
+        *value += 1;
+    }
+
+    
+    return XDP_PASS;
+}
+
+
+SEC("xdp-parse-dname")
+int parse_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
 {
 
 	struct cursor     c;
@@ -133,6 +214,14 @@ int check_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
     if (c.pos + 1 > c.end) {
         return XDP_PASS;
     }
+
+	md->lbl_cnt = (uint8_t)num_lbls;
+	md->lbl1_offset = offset1 - (void*)(long)ctx->data;
+	md->lbl2_offset = offset2 - (void*)(long)ctx->data;
+	md->lbl3_offset = offset3 - (void*)(long)ctx->data;
+
+    bpf_tail_call(ctx, &jmp_table, CHECK_CACHE);
+
 
     struct key_type key = { .prefixlen = 0 };
     void *keyp = &key.dname;
@@ -206,8 +295,10 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	struct dnshdr    *dns;
 
 
-	if (bpf_xdp_adjust_meta(ctx, -(int)sizeof(struct meta_data)))
+	if (bpf_xdp_adjust_meta(ctx, -(int)sizeof(struct meta_data))) {
+		bpf_printk("failed to adjust_meta, struct too large?");
 		return XDP_PASS;
+	}
 
 	cursor_init(&c, ctx);
 	md = (void *)(long)ctx->data_meta;
@@ -230,7 +321,7 @@ int xdp_zonelimit(struct xdp_md *ctx)
 		md->dname_pos = c.pos - (void *)eth;
         bpf_printk("got v6 DNS: %x", (ETH_P_IPV6));
         //check_dname(&c);
-        bpf_tail_call(ctx, &jmp_table, CHECK_DNAME);
+        bpf_tail_call(ctx, &jmp_table, PARSE_DNAME);
         bpf_printk("--------------------\n\n");
 
     } else if (eth->h_proto == __bpf_htons(ETH_P_IP)) {
@@ -247,7 +338,7 @@ int xdp_zonelimit(struct xdp_md *ctx)
         // XXX enabling on both v6 and v4 hits verifier limits if we track the
         // last 3 labels. For the last 2 labels (so domain.tld), it works..
         //check_dname(&c);
-        bpf_tail_call(ctx, &jmp_table, CHECK_DNAME);
+        bpf_tail_call(ctx, &jmp_table, PARSE_DNAME);
         bpf_printk("--------------------\n\n");
 
 
