@@ -2,47 +2,111 @@
 #include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
 #include "bpf-dns.h"
 
-struct dname {
-    char full[255];
-    char tld[10];
-    uint8_t len;
-};
-
-#define COPY_DNAME(skb, offset, dst, dname_len, n) {\
-    if (dname_len >= n) {\
-        bpf_skb_load_bytes(skb, offset, dst, n);\
-        offset += n;\
-        dst += n;\
-        dname_len -= n;\
-    }\
+#define FILL_LABEL_64(dst, src, lbl_len) {\
+    if (lbl_len >= 64 && offset + 64 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 64; \
+    } \
+}
+#define FILL_LABEL_32(dst, src, lbl_len) {\
+    if (lbl_len >= 32 && offset + 32 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 32; \
+    } \
 }
 
-//#define COPY_LABEL(dst, dst_offset, lbl, lbl_offset, lbl_len, N) {\
-//    if (lbl_len >= N) {\
-//        if ((void*)(lbl + lbl_offset + N) > c->end) { \
-//            return 0;\
-//        }\
-//        __builtin_memcpy(dst + dst_offset, lbl + lbl_offset, N);\
-//        dst_offset += N;\
-//        lbl_offset += N;\
-//        lbl_len -= N;\
-//    }\
-//}
-
-#define COPY_LABEL(dst, lbl, lbl_len, N) {\
-    if (lbl_len >= N) {\
-        if ((void*)(lbl) + N > c.end) {\
-            return 0;\
-        }\
-        __builtin_memcpy(dst, lbl, N);\
-        dst += N;\
-        lbl += N;\
-        lbl_len -= N;\
-    }\
+#define FILL_LABEL_16(dst, src, lbl_len) {\
+    if (lbl_len >= 16 && offset + 16 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 16; \
+    } \
 }
 
 
-#define NAMELEN 200
+#define FILL_LABEL_8(dst, src, lbl_len) {\
+    if (lbl_len >= 8 && offset + 8 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 8; \
+    } \
+}
+#define FILL_LABEL_4(dst, src, lbl_len) {\
+    if (lbl_len >= 4 && offset + 4 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 4; \
+    } \
+}
+
+#define FILL_LABEL_2(dst, src, lbl_len) {\
+    if (lbl_len >= 2 && offset + 2 <= c.end) {\
+        *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
+        lbl_len -= 2; \
+    } \
+}
+#define FILL_LABEL_1(dst, src, lbl_len) {\
+    if (lbl_len >= 1 && offset + 1 <= c.end) {\
+        *dst++ = *(char*)src++; \
+        lbl_len -= 1; \
+    } \
+}
+
+#define NAMELEN 64+64+4 +4 // 4 for padding?
 
 struct key_type {
     uint32_t prefixlen;
@@ -92,66 +156,70 @@ int check_cache(struct xdp_md *ctx)
 		return XDP_ABORTED;
 
     struct key_type key = { .prefixlen = 0 };
-    void *keyp = &key.dname;
+    unsigned char *keyp = (unsigned char *)&key.dname;
+    //__builtin_memset(keyp, 0, 200);
 
     // first label (TLD)
-	void *offset1 = c.pos + (md->lbl1_offset & 0xff);
-	if (offset1 +1 > c.end)
+	void *offset = c.pos + (md->lbl1_offset & 0xff);
+	if (offset +1 > c.end)
 		return XDP_ABORTED;
 
-    uint8_t ll_1 = *(uint8_t*)offset1 + 1;
-    key.prefixlen += ll_1;
+    uint8_t lbl_len = *(uint8_t*)offset + 1;
+    key.prefixlen += lbl_len;
 
-    //COPY_LABEL(keyp, offset1, ll_1, 16);
-    //COPY_LABEL(keyp, offset1, ll_1, 8);
-    COPY_LABEL(keyp, offset1, ll_1, 4);
-    COPY_LABEL(keyp, offset1, ll_1, 2);
-    COPY_LABEL(keyp, offset1, ll_1, 1);
-
+    FILL_LABEL_4(keyp, offset, lbl_len);
+    FILL_LABEL_2(keyp, offset, lbl_len);
+    FILL_LABEL_1(keyp, offset, lbl_len);
 
     if (md->lbl_cnt >= 2) {
-        // reset label offset for the next label
-		void *offset2 = c.pos + (md->lbl2_offset & 0xff);
-		if (offset2 + 1 > c.end)
+		offset = c.pos + (md->lbl2_offset & 0xff);
+		if (offset + 1 > c.end)
 			return XDP_ABORTED;
 
-        uint8_t ll_2 = *(uint8_t*)offset2 + 1;
-        key.prefixlen += ll_2;
-        //COPY_LABEL(keyp, offset2, ll_2, 64);
-        COPY_LABEL(keyp, offset2, ll_2, 32);
-        COPY_LABEL(keyp, offset2, ll_2, 16);
-        COPY_LABEL(keyp, offset2, ll_2, 8);
-        COPY_LABEL(keyp, offset2, ll_2, 4);
-        COPY_LABEL(keyp, offset2, ll_2, 2);
-        COPY_LABEL(keyp, offset2, ll_2, 1);
+        lbl_len = *(uint8_t*)offset + 1;
+        key.prefixlen += lbl_len;
+
+        if (lbl_len == 64) {
+            FILL_LABEL_64(keyp, offset, lbl_len);
+        } else {
+            FILL_LABEL_32(keyp, offset, lbl_len);
+            FILL_LABEL_16(keyp, offset, lbl_len);
+            FILL_LABEL_8(keyp, offset, lbl_len);
+            FILL_LABEL_4(keyp, offset, lbl_len);
+            FILL_LABEL_2(keyp, offset, lbl_len);
+            FILL_LABEL_1(keyp, offset, lbl_len);
+        }
+
     }
-    
-    
     if (md->lbl_cnt >= 3) {
-        // reset label offset for the next label
-		void *offset3 = c.pos + (md->lbl3_offset & 0xff);
-		if (offset3 + 1 > c.end)
+		offset = c.pos + (md->lbl3_offset & 0xff);
+		if (offset + 1 > c.end)
 			return XDP_ABORTED;
 
-        uint8_t ll_3 = *(uint8_t*)offset3 + 1;
-        key.prefixlen += ll_3;
-        //COPY_LABEL(keyp, offset3, ll_3, 64);
-        COPY_LABEL(keyp, offset3, ll_3, 32);
-        COPY_LABEL(keyp, offset3, ll_3, 16);
-        COPY_LABEL(keyp, offset3, ll_3, 8);
-        COPY_LABEL(keyp, offset3, ll_3, 4);
-        COPY_LABEL(keyp, offset3, ll_3, 2);
-        COPY_LABEL(keyp, offset3, ll_3, 1);
-    }
-    
+        lbl_len = *(uint8_t*)offset + 1;
+        key.prefixlen += lbl_len;
 
+        if (lbl_len == 64) {
+            FILL_LABEL_64(keyp, offset, lbl_len);
+        } else {
+            FILL_LABEL_32(keyp, offset, lbl_len);
+            FILL_LABEL_16(keyp, offset, lbl_len);
+            FILL_LABEL_8(keyp, offset, lbl_len);
+            FILL_LABEL_4(keyp, offset, lbl_len);
+            FILL_LABEL_2(keyp, offset, lbl_len);
+            FILL_LABEL_1(keyp, offset, lbl_len);
+        }
+
+    }
+	
     key.prefixlen *= 8; // from bytes to bits
     uint64_t *value;
     if ((value = bpf_map_lookup_elem(&zonelimit_dnames, &key))) {
-        bpf_printk("matched on %s with prefixlen %i, value: %i", &key.dname, key.prefixlen, *value);
+        //bpf_printk("matched on %s with prefixlen %i, value: %i", &key.dname, key.prefixlen, *value);
+        bpf_printk("matched %i", *value);
         *value += 1;
+        return XDP_DROP;
     }
-
     
     return XDP_PASS;
 }
@@ -183,12 +251,12 @@ int parse_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
     offset2 = c.pos;
     offset3 = c.pos;
 
-    uint8_t in_packet_len = 0;
+    //uint8_t in_packet_len = 0;
     uint8_t i;
     uint8_t num_lbls = 0;
     uint8_t labellen;
 
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < 128; i++) {
         if (c.pos + 1 > c.end) {
             return XDP_PASS;
         }
@@ -208,7 +276,7 @@ int parse_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
             return XDP_PASS;
         }
         //res->len += labellen + 1;
-        in_packet_len += labellen + 1;
+        //in_packet_len += labellen + 1;
         c.pos += labellen + 1;
     }
     if (c.pos + 1 > c.end) {
@@ -223,65 +291,9 @@ int parse_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
     bpf_tail_call(ctx, &jmp_table, CHECK_CACHE);
 
 
-    struct key_type key = { .prefixlen = 0 };
-    void *keyp = &key.dname;
+	return XDP_PASS;
 
-    // first label (TLD)
-    uint8_t ll_1 = *(uint8_t*)offset1 + 1;
-    key.prefixlen += ll_1;
-
-    //COPY_LABEL(keyp, offset1, ll_1, 16);
-    //COPY_LABEL(keyp, offset1, ll_1, 8);
-    COPY_LABEL(keyp, offset1, ll_1, 4);
-    COPY_LABEL(keyp, offset1, ll_1, 2);
-    COPY_LABEL(keyp, offset1, ll_1, 1);
-
-    if (num_lbls >= 2) {
-        // reset label offset for the next label
-        uint8_t ll_2 = *(uint8_t*)offset2 + 1;
-        key.prefixlen += ll_2;
-        //COPY_LABEL(keyp, offset2, ll_2, 64);
-        //COPY_LABEL(keyp, offset2, ll_2, 32);
-        COPY_LABEL(keyp, offset2, ll_2, 16);
-        COPY_LABEL(keyp, offset2, ll_2, 8);
-        COPY_LABEL(keyp, offset2, ll_2, 4);
-        COPY_LABEL(keyp, offset2, ll_2, 2);
-        COPY_LABEL(keyp, offset2, ll_2, 1);
-    }
-    
-    
-    if (num_lbls >= 3) {
-        // reset label offset for the next label
-        uint8_t ll_3 = *(uint8_t*)offset3 + 1;
-        key.prefixlen += ll_3;
-        //COPY_LABEL(keyp, offset3, ll_3, 64);
-        COPY_LABEL(keyp, offset3, ll_3, 32);
-        COPY_LABEL(keyp, offset3, ll_3, 16);
-        COPY_LABEL(keyp, offset3, ll_3, 8);
-        COPY_LABEL(keyp, offset3, ll_3, 4);
-        COPY_LABEL(keyp, offset3, ll_3, 2);
-        COPY_LABEL(keyp, offset3, ll_3, 1);
-    }
-    
-    
-
-    key.prefixlen *= 8; // from bytes to bits
-    uint64_t *value;
-    if ((value = bpf_map_lookup_elem(&zonelimit_dnames, &key))) {
-        bpf_printk("matched on %s with prefixlen %i, value: %i", &key.dname, key.prefixlen, *value);
-        *value += 1;
-    }
-
-    return XDP_PASS;
 }
-
-//static __always_inline
-//int check_dname(struct cursor *c)
-//{
-//    //struct dname dname = {0};
-//    parse_dname(c);
-//    return 1;
-//}
 
 SEC("xdp-zonelimit")
 int xdp_zonelimit(struct xdp_md *ctx)

@@ -1,8 +1,9 @@
 DEV=eno1
 
 CC=clang
-CFLAGS=-O2 -Wall -Werror -I ../libbpf/src -D'DEBUG=1' -D'DEFAULT_IFACE="$(DEV)"'
+CFLAGS=-O2 -g -Wall -Werror -I ../libbpf/src -D'DEBUG=1' -D'DEFAULT_IFACE="$(DEV)"'
 
+KEYLEN=140 #NAMELEN + 4 bytes for the prefix len, so 64+64+4 +4(padding) + 4(pfx)
 
 XDP_PROG=xdp_zonelimit.o
 
@@ -44,7 +45,7 @@ sys_fs_bpf_mounted:
 
 /sys/fs/bpf/zonelimit_dnames: sys_fs_bpf_mounted
 	sudo bpftool map create /sys/fs/bpf/zonelimit_dnames flags 1 \
-		name zonelimit_dnames type lpm_trie key 204 value 8 entries 10
+		name zonelimit_dnames type lpm_trie key $(KEYLEN) value 8 entries 10
 
 maps: /sys/fs/bpf/zonelimit_dnames
 

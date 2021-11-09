@@ -27,7 +27,7 @@ int print_usage(int ret_code, const char *progname)
 #define JMP_TBL "jmp_table"
 #define ZONELIMIT_DNAMES "zonelimit_dnames"
 
-#define NAMELEN 200
+#define NAMELEN 64+64+4 +4 // 4 for padding?
 
 struct key_type {
     uint32_t prefixlen;
