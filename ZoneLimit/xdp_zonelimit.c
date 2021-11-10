@@ -1,3 +1,4 @@
+#include <linux/ipv6.h>
 #include <linux/bpf.h>
 #include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
 #include "bpf-dns.h"
@@ -117,20 +118,21 @@ struct bpf_map_def SEC("maps") jmp_table = {
     .type = BPF_MAP_TYPE_PROG_ARRAY,
     .key_size = sizeof(uint32_t),
     .value_size = sizeof(uint32_t),
-    .max_entries = 3
+    .max_entries = 4
 };
 
-#define CHECK_CACHE 0
-#define PARSE_DNAME 1
+#define HANDLE_MATCH 0
+#define CHECK_CACHE 1
+#define PARSE_DNAME 2
 
 struct meta_data {
-	uint16_t eth_proto;
-	//uint16_t ip_pos;
-	uint16_t dname_pos;
+	uint16_t eth_proto; // TODO can be more efficient
+	//uint8_t ip_pos;
+	uint8_t dname_pos;
 	uint8_t lbl_cnt;
-	uint16_t lbl1_offset;
-	uint16_t lbl2_offset;
-	uint16_t lbl3_offset;
+	uint8_t lbl1_offset;
+	uint8_t lbl2_offset;
+	uint8_t lbl3_offset;
 	//uint16_t unused;
 };
 
@@ -142,8 +144,75 @@ struct bpf_map_def SEC("maps") zonelimit_dnames = {
 	.map_flags = BPF_F_NO_PREALLOC
 };
 
-//static __always_inline
-//int parse_dname(struct cursor *c)//, struct __sk_buff *skb)
+
+SEC("xdp-handle-match")
+int handle_match(struct xdp_md *ctx)
+{
+	struct cursor     c;
+	struct meta_data *md = (void *)(long)ctx->data_meta;
+
+	cursor_init(&c, ctx);
+	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+		return XDP_ABORTED;
+
+    //c.pos += md->ip_pos;
+
+    struct ethhdr *eth;
+    struct udphdr *udp;
+	struct dnshdr    *dns;
+
+    if (md->eth_proto == ETH_P_IPV6){
+        struct ipv6hdr *ipv6;
+
+        if (!(eth = parse_ethhdr(&c)) ||
+                !(ipv6 = parse_ipv6hdr(&c)) ||
+                !(udp = parse_udphdr(&c)) ||
+                !(dns = parse_dnshdr(&c)))
+            return XDP_PASS;
+
+        struct in6_addr tmp = ipv6->saddr;
+        ipv6->saddr = ipv6->daddr;
+        ipv6->daddr = tmp;
+
+    } else if (md->eth_proto == ETH_P_IP) {
+        struct iphdr *ipv4;
+        if (!(eth = parse_ethhdr(&c)) ||
+                !(ipv4 = parse_iphdr(&c)) ||
+                !(udp = parse_udphdr(&c)) ||
+                !(dns = parse_dnshdr(&c)))
+            return XDP_PASS;
+
+        uint32_t tmp = ipv4->saddr; 
+        ipv4->saddr = ipv4->daddr;
+        ipv4->daddr = tmp;
+
+    } else {
+        bpf_printk("Not v6 nor v4? This should never happen, returning XDP_ABORTED");
+        return XDP_ABORTED;
+    }
+
+    uint32_t old_flags = dns->flags.as_value;
+    dns->flags.as_bits_and_pieces.qr = 1;
+    dns->flags.as_bits_and_pieces.rcode = 5; // REFUSED
+    uint32_t new_flags = dns->flags.as_value;
+
+    uint32_t tmp_l4 = udp->source;
+    udp->source = udp->dest;
+    udp->dest = tmp_l4;
+
+    uint32_t csum = ~(udp->check);
+    csum = bpf_csum_diff(&old_flags, 4, &new_flags, 4, csum);
+    csum = (csum & 0xFFFF) + (csum >> 16);
+    csum = (csum & 0xFFFF) + (csum >> 16);
+    udp->check = ~csum;
+
+    uint8_t swap_eth[ETH_ALEN];
+    memcpy(swap_eth, eth->h_dest, ETH_ALEN);
+    memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
+    memcpy(eth->h_source, swap_eth, ETH_ALEN);
+
+    return XDP_TX;
+}
 
 SEC("xdp-check-cache")
 int check_cache(struct xdp_md *ctx)
@@ -215,9 +284,9 @@ int check_cache(struct xdp_md *ctx)
     key.prefixlen *= 8; // from bytes to bits
     uint64_t *value;
     if ((value = bpf_map_lookup_elem(&zonelimit_dnames, &key))) {
-        //bpf_printk("matched on %s with prefixlen %i, value: %i", &key.dname, key.prefixlen, *value);
-        bpf_printk("matched %i", *value);
+        bpf_printk("match for %s value: %i++", &key.dname, *value);
         *value += 1;
+        bpf_tail_call(ctx, &jmp_table, HANDLE_MATCH);
         return XDP_DROP;
     }
     
@@ -330,9 +399,8 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 		return XDP_PASS; /* Not DNS */
 
 		md->eth_proto = ETH_P_IPV6;
+		//md->ip_pos = (void *)ipv6 - (void *)eth;
 		md->dname_pos = c.pos - (void *)eth;
-        bpf_printk("got v6 DNS: %x", (ETH_P_IPV6));
-        //check_dname(&c);
         bpf_tail_call(ctx, &jmp_table, PARSE_DNAME);
         bpf_printk("--------------------\n\n");
 
@@ -344,8 +412,8 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 	||  !(dns = parse_dnshdr(&c)))
 	 		return XDP_PASS; /* Not DNS */
 
-        bpf_printk("got v4 DNS: %x", (ETH_P_IP));
 		md->eth_proto = ETH_P_IP;
+		//md->ip_pos = (void *)ipv4 - (void *)eth;
 		md->dname_pos = c.pos - (void *)eth;
         // XXX enabling on both v6 and v4 hits verifier limits if we track the
         // last 3 labels. For the last 2 labels (so domain.tld), it works..
