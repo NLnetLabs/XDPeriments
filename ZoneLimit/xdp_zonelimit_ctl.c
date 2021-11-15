@@ -40,15 +40,18 @@ int str_to_key(char *str, struct key_type *key)
     char *kp = key->dname;
 
     char c;
-    int8_t i, j = 1;
-    uint8_t lbllen = 0;
-    uint8_t lblstart = 0;
+    int32_t i, j = 1;
+    uint32_t lbllen = 0;
+    uint32_t lblstart = 0;
+    uint8_t lblcnt = 0;
 
+    // we process the input string backwards
     for (i = strlen(str) - 1; i >= 0; i--) {
         c = str[i];
         if (c == '.') {
             // label boundary: write the length to the 'lblstart' index
             kp[lblstart] = (char)lbllen;
+            lblcnt++;
             // copy the actual label from the input string into kp
             memcpy(kp + lblstart + 1, str + strlen(str) - j + 1, lbllen);
             // reset the label len counter 
@@ -57,17 +60,21 @@ int str_to_key(char *str, struct key_type *key)
             lblstart = j;
         } else {
             lbllen += 1;
+            if (lbllen > 63) {
+                fprintf(stderr, "ERROR: illegal label length, max is 63\n");
+                return -1;
+            }
         }
         j++;
         if (i == 0) {
             // last char of input, create a label of it and be done
             kp[lblstart] = (char)lbllen;
+            lblcnt++;
             memcpy(kp + lblstart + 1, str + strlen(str) - j + 1, lbllen);
         }
     }
 
-
-    return 0;
+    return lblcnt;
 }
 
 int add_dname(int argc, char **argv, int map_fd)
@@ -76,14 +83,26 @@ int add_dname(int argc, char **argv, int map_fd)
         return print_usage(EXIT_FAILURE, argv[0]);
 
     struct key_type k = { .prefixlen = 0 };
-    str_to_key(argv[2], &k);
+    int lblcnt = str_to_key(argv[2], &k);
+
+    if (lblcnt < 0) {
+        return EXIT_FAILURE;
+    }
+    if (lblcnt > 3) {
+        fprintf(stderr, "ERROR: Can only add dnames with up to three labels"); 
+        return EXIT_FAILURE;
+    }
+    if (k.prefixlen > 64+64+4) {
+        fprintf(stderr, "ERROR: Can only add dnames of length 64+64+4 (three labels) total"); 
+        return EXIT_FAILURE;
+    }
 
     printf("adding key %s\n", k.dname);
 
     k.prefixlen = strlen(k.dname) * 8;
     uint64_t zero = 0;
     if (bpf_map_update_elem(map_fd, &k, &zero, 0) < 0) {
-        fprintf(stderr, "failed to add dname: %s\n", strerror(errno));
+        fprintf(stderr, "ERROR: failed to add dname: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
