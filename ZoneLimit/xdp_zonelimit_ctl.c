@@ -33,30 +33,24 @@ struct key_type {
     uint32_t prefixlen;
     char dname[NAMELEN];
 };
-int add_dname(int argc, char **argv, int map_fd)
+
+
+int str_to_key(char *str, struct key_type *key)
 {
-    if (argc != 3)
-        return print_usage(EXIT_FAILURE, argv[0]);
-
-    // adding foo.test.com
-    // should result in an entry
-    // \03com\04test\03foo
-
-    struct key_type k = { .prefixlen = 0 };
-    char *key = k.dname;
+    char *kp = key->dname;
 
     char c;
     int8_t i, j = 1;
     uint8_t lbllen = 0;
     uint8_t lblstart = 0;
 
-    for (i = strlen(argv[2]) - 1; i >= 0; i--) {
-        c = argv[2][i];
+    for (i = strlen(str) - 1; i >= 0; i--) {
+        c = str[i];
         if (c == '.') {
             // label boundary: write the length to the 'lblstart' index
-            key[lblstart] = (char)lbllen;
-            // copy the actual label from the input string into key
-            memcpy(key + lblstart + 1, argv[2] + strlen(argv[2]) - j + 1, lbllen);
+            kp[lblstart] = (char)lbllen;
+            // copy the actual label from the input string into kp
+            memcpy(kp + lblstart + 1, str + strlen(str) - j + 1, lbllen);
             // reset the label len counter 
             lbllen = 0;
             // and record the index of where the next label length byte will go:
@@ -67,16 +61,48 @@ int add_dname(int argc, char **argv, int map_fd)
         j++;
         if (i == 0) {
             // last char of input, create a label of it and be done
-            key[lblstart] = (char)lbllen;
-            memcpy(key + lblstart + 1, argv[2] + strlen(argv[2]) - j + 1, lbllen);
+            kp[lblstart] = (char)lbllen;
+            memcpy(kp + lblstart + 1, str + strlen(str) - j + 1, lbllen);
         }
     }
-    printf("adding key %s\n", key);
 
-    k.prefixlen = strlen(argv[2])*8;
+
+    return 0;
+}
+
+int add_dname(int argc, char **argv, int map_fd)
+{
+    if (argc != 3)
+        return print_usage(EXIT_FAILURE, argv[0]);
+
+    struct key_type k = { .prefixlen = 0 };
+    str_to_key(argv[2], &k);
+
+    printf("adding key %s\n", k.dname);
+
+    k.prefixlen = strlen(k.dname) * 8;
     uint64_t zero = 0;
     if (bpf_map_update_elem(map_fd, &k, &zero, 0) < 0) {
         fprintf(stderr, "failed to add dname: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int del_dname(int argc, char **argv, int map_fd)
+{
+    if (argc != 3)
+        return print_usage(EXIT_FAILURE, argv[0]);
+
+    struct key_type k = { .prefixlen = 0 };
+    str_to_key(argv[2], &k);
+
+    printf("deleting key %s\n", k.dname);
+
+    k.prefixlen = strlen(k.dname)*8;
+    if (bpf_map_delete_elem(map_fd, &k) < 0) {
+        fprintf(stderr, "failed to remove dname: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -95,20 +121,22 @@ int list_dnames(int argc, char **argv, int map_fd)
     prev_keyp = NULL;
     uint8_t i, lblcnt = 0;
     uint8_t lbls[10];
+    uint64_t hitcount = 0;
 	while (!bpf_map_get_next_key(map_fd, prev_keyp, keyp)) {
-        printf("%s\n", key.dname);
-
+        bpf_map_lookup_elem(map_fd, &key, &hitcount);
         for(i = 0; i < strlen(key.dname);  i++) {
-            lbls[lblcnt++] = i;
+            lbls[++lblcnt] = i;
             i += key.dname[i];
         }
-        printf("lblcnt: %i\n", lblcnt);
+
         for(i = lblcnt; i > 0; i--){
-            printf("lbl %s\n", &key.dname[lbls[i]]);
+            printf("%.*s.", (uint8_t)key.dname[lbls[i]], &key.dname[lbls[i]+1]);
         }
+        int padding = 25 - strlen(key.dname);
+        printf("%*lu\n", padding, hitcount);
 
 		prev_keyp = keyp;
-        lblcnt = 0;
+        lblcnt = hitcount = 0;
     }
     printf("--------\n");
 
@@ -194,6 +222,8 @@ int main(int argc, char **argv)
 	}
     else if(!strcmp(argv[1], "add"))
         return add_dname(argc, argv, map_fd);
+    else if(!strcmp(argv[1], "del"))
+        return del_dname(argc, argv, map_fd);
     else if(!strcmp(argv[1], "list"))
         return list_dnames(argc, argv, map_fd);
     else
