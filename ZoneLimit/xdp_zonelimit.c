@@ -3,6 +3,23 @@
 #include <bpf_helpers.h>    /* for bpf_get_prandom_u32() */
 #include "bpf-dns.h"
 
+
+// ---------------------------------------- 
+// Compile-time configuration options:
+
+#define LOG_MATCH 10    // Log every n'th message. 0 to disable logging,
+                        // 1 to log everything
+
+
+// - End of configuration options --------- 
+
+
+
+
+
+
+#define NAMELEN 64+64+4 +4 // 4 for padding?
+
 #define FILL_LABEL_64(dst, src, lbl_len) {\
     if (lbl_len >= 64 && offset + 64 <= c.end) {\
         *dst++ = *(char*)src++; *dst++ = *(char*)src++; \
@@ -107,8 +124,6 @@
     } \
 }
 
-#define NAMELEN 64+64+4 +4 // 4 for padding?
-
 struct key_type {
     uint32_t prefixlen;
     char dname[NAMELEN];
@@ -133,7 +148,6 @@ struct meta_data {
 	uint8_t lbl1_offset;
 	uint8_t lbl2_offset;
 	uint8_t lbl3_offset;
-	//uint16_t unused;
 };
 
 struct bpf_map_def SEC("maps") zonelimit_dnames = {
@@ -152,10 +166,8 @@ int handle_match(struct xdp_md *ctx)
 	struct meta_data *md = (void *)(long)ctx->data_meta;
 
 	cursor_init(&c, ctx);
-	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+	if ((void *)(md + 1) > c.pos)
 		return XDP_ABORTED;
-
-    //c.pos += md->ip_pos;
 
     struct ethhdr *eth;
     struct udphdr *udp;
@@ -226,7 +238,6 @@ int check_cache(struct xdp_md *ctx)
 
     struct key_type key = { .prefixlen = 0 };
     unsigned char *keyp = (unsigned char *)&key.dname;
-    //__builtin_memset(keyp, 0, 200);
 
     // first label (TLD)
 	void *offset = c.pos + (md->lbl1_offset & 0xff);
@@ -284,8 +295,10 @@ int check_cache(struct xdp_md *ctx)
     key.prefixlen *= 8; // from bytes to bits
     uint64_t *value;
     if ((value = bpf_map_lookup_elem(&zonelimit_dnames, &key))) {
-        bpf_printk("match for %s value: %i++", &key.dname, *value);
         *value += 1;
+        if (LOG_MATCH > 0 && (*value % LOG_MATCH) == 0)
+            bpf_printk("match for %s value: %i", &key.dname, *value);
+
         bpf_tail_call(ctx, &jmp_table, HANDLE_MATCH);
         return XDP_DROP;
     }
@@ -399,10 +412,8 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 		return XDP_PASS; /* Not DNS */
 
 		md->eth_proto = ETH_P_IPV6;
-		//md->ip_pos = (void *)ipv6 - (void *)eth;
 		md->dname_pos = c.pos - (void *)eth;
         bpf_tail_call(ctx, &jmp_table, PARSE_DNAME);
-        bpf_printk("--------------------\n\n");
 
     } else if (eth->h_proto == __bpf_htons(ETH_P_IP)) {
 		if (!(ipv4 = parse_iphdr(&c))
@@ -413,13 +424,8 @@ int xdp_zonelimit(struct xdp_md *ctx)
 	 		return XDP_PASS; /* Not DNS */
 
 		md->eth_proto = ETH_P_IP;
-		//md->ip_pos = (void *)ipv4 - (void *)eth;
 		md->dname_pos = c.pos - (void *)eth;
-        // XXX enabling on both v6 and v4 hits verifier limits if we track the
-        // last 3 labels. For the last 2 labels (so domain.tld), it works..
-        //check_dname(&c);
         bpf_tail_call(ctx, &jmp_table, PARSE_DNAME);
-        bpf_printk("--------------------\n\n");
 
 
     }
