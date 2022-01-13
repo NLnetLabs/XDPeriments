@@ -318,7 +318,6 @@ int parse_dname(struct xdp_md *ctx)
     offset2 = c.pos;
     offset3 = c.pos;
 
-    //uint8_t in_packet_len = 0;
     uint8_t i;
     uint8_t num_lbls = 0;
     uint8_t labellen;
