@@ -155,16 +155,16 @@ struct bpf_map_def SEC("maps") zonelimit_dnames = {
 SEC("xdp-handle-match")
 int handle_match(struct xdp_md *ctx)
 {
-	struct cursor     c;
-	struct meta_data *md = (void *)(long)ctx->data_meta;
+    struct cursor     c;
+    struct meta_data *md = (void *)(long)ctx->data_meta;
 
-	cursor_init(&c, ctx);
-	if ((void *)(md + 1) > c.pos)
-		return XDP_ABORTED;
+    cursor_init(&c, ctx);
+    if ((void *)(md + 1) > c.pos)
+        return XDP_ABORTED;
 
     struct ethhdr *eth;
     struct udphdr *udp;
-	struct dnshdr    *dns;
+    struct dnshdr *dns;
 
     if (md->eth_proto == ETH_P_IPV6){
         struct ipv6hdr *ipv6;
