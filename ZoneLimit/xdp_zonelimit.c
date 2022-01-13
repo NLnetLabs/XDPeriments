@@ -226,7 +226,7 @@ int check_cache(struct xdp_md *ctx)
 	struct meta_data *md = (void *)(long)ctx->data_meta;
 
 	cursor_init(&c, ctx);
-	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+	if ((void *)(md + 1) > c.pos)
 		return XDP_ABORTED;
 
     struct key_type key = { .prefixlen = 0 };
