@@ -302,7 +302,7 @@ int check_cache(struct xdp_md *ctx)
 
 
 SEC("xdp-parse-dname")
-int parse_dname(struct xdp_md *ctx)//, struct __sk_buff *skb)
+int parse_dname(struct xdp_md *ctx)
 {
 
 	struct cursor     c;
