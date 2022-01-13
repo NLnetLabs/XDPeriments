@@ -4,19 +4,12 @@
 #include "bpf-dns.h"
 
 
-// ---------------------------------------- 
-// Compile-time configuration options:
+/* Compile-time configuration options */
 
 #define LOG_MATCH 10    // Log every n'th message. 0 to disable logging,
                         // 1 to log everything
 
-
-// - End of configuration options --------- 
-
-
-
-
-
+/* End of configuration options */
 
 #define NAMELEN 64+64+4 +4 // 4 for padding?
 
