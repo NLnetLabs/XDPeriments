@@ -29,19 +29,6 @@ sys_fs_bpf_mounted:
 	sudo mount -t bpf none /sys/fs/bpf
 	@touch sys_fs_bpf_mounted
 
-#/sys/fs/bpf/rrl_exclude_v4_prefixes: sys_fs_bpf_mounted
-#	sudo bpftool map create /sys/fs/bpf/rrl_exclude_v4_prefixes flags 1 \
-#	             name exclude_v4_prefixes type lpm_trie key 8 value 8 entries 10000
-#
-#/sys/fs/bpf/rrl_exclude_v6_prefixes: sys_fs_bpf_mounted
-#	sudo bpftool map create /sys/fs/bpf/rrl_exclude_v6_prefixes flags 1 \
-#	             name exclude_v6_prefixes type lpm_trie key 12 value 8 entries 10000
-#
-#vip_maps: /sys/fs/bpf/rrl_exclude_v4_prefixes /sys/fs/bpf/rrl_exclude_v6_prefixes
-
-#/sys/fs/bpf/zonelimit_dnames: sys_fs_bpf_mounted
-#	sudo bpftool map create /sys/fs/bpf/zonelimit_dnames flags 1 \
-#		name zonelimit_dnames type hash key 64 value 8 entries 10
 
 /sys/fs/bpf/zonelimit_dnames: sys_fs_bpf_mounted
 	sudo bpftool map create /sys/fs/bpf/zonelimit_dnames flags 1 \
