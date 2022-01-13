@@ -264,6 +264,7 @@ int check_cache(struct xdp_md *ctx)
         }
 
     }
+    /* third label */
     if (md->lbl_cnt >= 3) {
 		offset = c.pos + (md->lbl3_offset & 0xff);
 		if (offset + 1 > c.end)
