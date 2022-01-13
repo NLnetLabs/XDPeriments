@@ -244,6 +244,7 @@ int check_cache(struct xdp_md *ctx)
     FILL_LABEL_2(keyp, offset, lbl_len);
     FILL_LABEL_1(keyp, offset, lbl_len);
 
+    /* second label (SLD) */
     if (md->lbl_cnt >= 2) {
 		offset = c.pos + (md->lbl2_offset & 0xff);
 		if (offset + 1 > c.end)
