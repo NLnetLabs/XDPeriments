@@ -135,7 +135,6 @@ struct bpf_map_def SEC("maps") jmp_table = {
 
 struct meta_data {
 	uint16_t eth_proto; // TODO can be more efficient
-	//uint8_t ip_pos;
 	uint8_t dname_pos;
 	uint8_t lbl_cnt;
 	uint8_t lbl1_offset;
