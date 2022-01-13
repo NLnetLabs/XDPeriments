@@ -40,10 +40,6 @@ load: $(XDP_PROG) maps
 	sudo bpftool prog load $(XDP_PROG) /sys/fs/bpf/zonelimit type xdp \
 		map name zonelimit_dnames \
 		pinned /sys/fs/bpf/zonelimit_dnames
-#		map name exclude_v4_prefixes \
-#		pinned /sys/fs/bpf/rrl_exclude_v4_prefixes \
-#		map name exclude_v6_prefixes \
-#		pinned /sys/fs/bpf/rrl_exclude_v6_prefixes
 	sudo ip --force link set dev $(DEV) xdpgeneric \
 		pinned /sys/fs/bpf/zonelimit
 
