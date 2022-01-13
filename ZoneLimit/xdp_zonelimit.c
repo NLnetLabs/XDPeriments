@@ -309,16 +309,8 @@ int parse_dname(struct xdp_md *ctx)
 	struct meta_data *md = (void *)(long)ctx->data_meta;
 
 	cursor_init(&c, ctx);
-	if ((void *)(md + 1) > c.pos) // || c.pos + md->dname_pos > c.end)
+	if ((void *)(md + 1) > c.pos)
 		return XDP_ABORTED;
-
-    //bpf_printk("jumped into CHECK_DNAME for eth %X, offset %i", md->eth_proto, md->dname_pos);
-	//bpf_printk("c->end - c->start: %i", c.end - c.pos);
-	//if (c.pos + md->dname_pos > c.end)
-	//	return XDP_ABORTED;
-
-	//if (md->dname_pos == 74)
-	//	bpf_printk("it's 74 alright");
 	c.pos = c.pos + (md->dname_pos & 0x7fff);
 	//c.pos += 74;
 
