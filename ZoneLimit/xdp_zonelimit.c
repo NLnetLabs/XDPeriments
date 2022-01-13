@@ -312,7 +312,6 @@ int parse_dname(struct xdp_md *ctx)
 	if ((void *)(md + 1) > c.pos)
 		return XDP_ABORTED;
 	c.pos = c.pos + (md->dname_pos & 0x7fff);
-	//c.pos += 74;
 
     void *offset1, *offset2, *offset3;
     offset1 = c.pos;
