@@ -336,13 +336,9 @@ int parse_dname(struct xdp_md *ctx)
         offset2 = offset1;
         offset1 = c.pos;
 
-        //tld_offset = res->len;
-
         if (c.pos + labellen + 1 > c.end) {
             return XDP_PASS;
         }
-        //res->len += labellen + 1;
-        //in_packet_len += labellen + 1;
         c.pos += labellen + 1;
     }
     if (c.pos + 1 > c.end) {
