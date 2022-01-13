@@ -1,4 +1,4 @@
-DEV=eno1
+DEV=lo
 
 CC=clang
 CFLAGS=-O2 -g -Wall -Werror -I ../libbpf/src -D'DEBUG=1' -D'DEFAULT_IFACE="$(DEV)"'
