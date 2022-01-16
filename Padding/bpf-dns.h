@@ -169,7 +169,7 @@ uint8_t *skip_dname(struct cursor *c)
         uint8_t *dname = c->pos;
 	uint8_t i;
 
-        for (i = 0; i < 128; i++) { /* Maximum 128 labels */
+        for (i = 0; i < 127; i++) { /* Maximum 127 labels */
                 uint8_t o;
 
                 if (c->pos + 1 > c->end)

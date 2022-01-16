@@ -74,7 +74,7 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 			if (!(opt = parse_option(&c)))
 				return XDP_ABORTED;
 
-			bpf_printk("IPv6 OPT code: %d, len: %d\n"
+			bpf_printk("IPv6 OPT code: %d, len: %d "
 			          , __bpf_ntohs(opt->code)
 				  , __bpf_ntohs(opt->len));
 
@@ -89,7 +89,7 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 				q.id = dns->id;
 				bpf_map_update_elem( &queries_v6
 				                   , &q, &one, BPF_ANY);
-				bpf_printk("IPv6 padding option found\n");
+				bpf_printk("IPv6 padding option found");
 				return XDP_PASS;
 			}
 			if (opt_len > rdata_len
@@ -136,7 +136,7 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 			if (!(opt = parse_option(&c)))
 				return XDP_ABORTED;
 
-			bpf_printk("IPv4 OPT code: %d, len: %d\n"
+			bpf_printk("IPv4 OPT code: %d, len: %d"
 			          , __bpf_ntohs(opt->code)
 				  , __bpf_ntohs(opt->len));
 
@@ -151,7 +151,7 @@ int xdp_edns0_padding_ingress(struct xdp_md *ctx)
 				q.id = dns->id;
 				bpf_map_update_elem( &queries_v4
 				                   , &q, &one, BPF_ANY);
-				bpf_printk("IPv4 padding option found\n");
+				bpf_printk("IPv4 padding option found");
 				return XDP_PASS;
 			}
 			if (opt_len > rdata_len

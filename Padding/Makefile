@@ -29,7 +29,7 @@ clsact:
 
 load: clsact $(BPF_PROG) $(XDP_PROG)
 	sudo /sbin/tc filter del dev $(DEV) egress || true
-	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(BPF_PROG) sec tc-edns0-padding-egress
+	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(BPF_PROG)
 	sudo ip --force link set dev $(DEV) xdpgeneric obj $(XDP_PROG) sec xdp-edns0-padding-ingress
 
 unload:

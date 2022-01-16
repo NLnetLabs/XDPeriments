@@ -18,48 +18,18 @@
 #include "bpf_edns0_padding.h"
 #include "bpf-dns.h"
 
+#define PAD_SIZE 468
+
 struct bpf_elf_map jmp_map SEC("maps") = {
         .type           = BPF_MAP_TYPE_PROG_ARRAY,
         .id             = 1,
         .size_key       = sizeof(uint32_t),
         .size_value     = sizeof(uint32_t),
         .pinning        = PIN_GLOBAL_NS,
-        .max_elem       = 1,
+        .max_elem       = 2,
 };
 
 SEC("1/0")
-int skip_resource_records(struct __sk_buff *skb)
-{
-	struct cursor     c;
-	uint8_t          *dname;
-	struct dns_rr    *rr;
-
-	cursor_init_skb(&c, skb);
-	if (skb->cb[1] > 1500)
-		return TC_ACT_OK;
-	c.pos += skb->cb[1];
-
-	if (!(dname = skip_dname(&c))
-	||  !(rr = parse_dns_rr(&c))
-	||  __bpf_ntohs(rr->rdata_len) > 1500)
-		return TC_ACT_OK;
-	c.pos += __bpf_ntohs(rr->rdata_len);
-
-	bpf_printk("rr %u, type: %d\n", skb->cb[0], __bpf_ntohs(rr->type));
-	if (skb->cb[0] > 0) {
-		skb->cb[0] -= 1;
-		skb->cb[1] = c.pos - (void *)(long)skb->data;
-		bpf_tail_call(skb, &jmp_map, 0);
-		bpf_printk("bpf_tail_call failed\n");
-	} else {
-		bpf_printk("have all answers & authoritative\n");
-		bpf_printk("to_grow: %d\n", c.end - c.pos);
-		rr->rdata_len = __bpf_htons(__bpf_ntohs(rr->rdata_len) + (c.end - c.pos));
-	}
-	return TC_ACT_OK;
-}
-
-SEC("tc-edns0-padding-egress")
 int tc_edns0_padding_egress(struct __sk_buff *skb)
 {
 	struct cursor     c;
@@ -84,7 +54,7 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 		||  !__bpf_ntohs(dns->arcount))
 	 		return TC_ACT_OK; /* Not DNS with OPT RR*/
 
-		bpf_printk("IPv6 DNS response\n");
+		bpf_printk("IPv6 DNS response");
 
 		struct query_v6 q;
 		memcpy(&q.addr, &ipv6->saddr, sizeof(q.addr));
@@ -93,10 +63,10 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 
 		if (!bpf_map_delete_elem(&queries_v6, &q)) {
 			uint16_t msg_sz = c.end - (void *)dns + 4;
-			uint16_t pad_len = 468 - (msg_sz % 468);
-			uint16_t to_grow = 4 + pad_len;
+			uint16_t pad_size = PAD_SIZE - (msg_sz % PAD_SIZE);
+			uint16_t to_grow = 4 + pad_size;
 			uint16_t pad_opt[2] = { __bpf_ntohs(OPT_CODE_PADDING)
-			                      , __bpf_ntohs(pad_len) };
+			                      , __bpf_ntohs(pad_size) };
 
 			if (!skip_dname(&c) || !parse_dns_qrr(&c))
 				return TC_ACT_OK;
@@ -113,8 +83,8 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 			bpf_skb_store_bytes( skb, pkt_end, pad_opt, 4 
 			                   , BPF_F_RECOMPUTE_CSUM);
 
-    			bpf_tail_call(skb, &jmp_map, 0);
-			bpf_printk("IPv6 bpf_tail_call() failed\n");
+    			bpf_tail_call(skb, &jmp_map, 1);
+			bpf_printk("IPv6 bpf_tail_call() failed");
 		}
 
 	} else if (eth_proto == __bpf_htons(ETH_P_IP)) {
@@ -126,7 +96,7 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 		||  !__bpf_ntohs(dns->arcount))
 	 		return TC_ACT_OK; /* Not DNS */
 
-		bpf_printk("IPv4 DNS response\n");
+		bpf_printk("IPv4 DNS response");
 
 		struct query_v4 q;
 		q.addr = ipv4->saddr;
@@ -135,10 +105,10 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 
 		if (!bpf_map_delete_elem(&queries_v4, &q)) {
 			uint16_t msg_sz = c.end - (void *)dns + 4;
-			uint16_t pad_len = 468 - (msg_sz % 468);
-			uint16_t to_grow = 4 + pad_len;
+			uint16_t pad_size = PAD_SIZE - (msg_sz % PAD_SIZE);
+			uint16_t to_grow = 4 + pad_size;
 			uint16_t pad_opt[2] = { __bpf_ntohs(OPT_CODE_PADDING)
-			                      , __bpf_ntohs(pad_len) };
+			                      , __bpf_ntohs(pad_size) };
 
 			if (!skip_dname(&c) || !parse_dns_qrr(&c))
 				return TC_ACT_OK;
@@ -165,9 +135,41 @@ int tc_edns0_padding_egress(struct __sk_buff *skb)
 			bpf_skb_change_tail( skb, pkt_end + to_grow, 0);
 			bpf_skb_store_bytes( skb, pkt_end, pad_opt, 4 
 			                   , BPF_F_RECOMPUTE_CSUM);
-    			bpf_tail_call(skb, &jmp_map, 0);
-			bpf_printk("IPv4 bpf_tail_call() failed\n");
+    			bpf_tail_call(skb, &jmp_map, 1);
+			bpf_printk("IPv4 bpf_tail_call() failed");
 		}
+	}
+	return TC_ACT_OK;
+}
+
+SEC("1/1")
+int skip_resource_records(struct __sk_buff *skb)
+{
+	struct cursor     c;
+	uint8_t          *dname;
+	struct dns_rr    *rr;
+
+	cursor_init_skb(&c, skb);
+	if (skb->cb[1] > 1500)
+		return TC_ACT_OK;
+	c.pos += skb->cb[1];
+
+	if (!(dname = skip_dname(&c))
+	||  !(rr = parse_dns_rr(&c))
+	||  __bpf_ntohs(rr->rdata_len) > 1500)
+		return TC_ACT_OK;
+	c.pos += __bpf_ntohs(rr->rdata_len);
+
+	bpf_printk("rr %u, type: %d", skb->cb[0], __bpf_ntohs(rr->type));
+	if (skb->cb[0] > 0) {
+		skb->cb[0] -= 1;
+		skb->cb[1] = c.pos - (void *)(long)skb->data;
+		bpf_tail_call(skb, &jmp_map, 1);
+		bpf_printk("bpf_tail_call failed");
+	} else {
+		bpf_printk("have all answers & authoritative");
+		bpf_printk("to_grow: %d\n", c.end - c.pos);
+		rr->rdata_len = __bpf_htons(__bpf_ntohs(rr->rdata_len) + (c.end - c.pos));
 	}
 	return TC_ACT_OK;
 }
