@@ -20,9 +20,12 @@
     }\
 }
 
-#define COPY_TLDe(data, offset, dst, tld_len, n) \
+#define COPY_TLDe(data, dst, tld_len, n) \
     else if (tld_len == n) {\
-        memcpy(data + offset - tld_len + 1, dst, n - 1);\
+        if (data+n > c->end) {\
+            return XDP_PASS;\
+        }\
+        memcpy(dst,data, n);\
     }\
 
 struct dname {
@@ -41,14 +44,14 @@ int parse_dname(struct dname *res, struct stats_key *stats_key, struct cursor *c
 
 
     res->len = 0;
-    //uint8_t tld_offset = 0;
+    uint8_t tld_offset = 0;
 
 
     // determine total length of the dname, and the offset of the last label
-    // FIXME reduced from 128 to 40 to please the verifier
+    // FIXME reduced from 128 to 30 to please the verifier
     // can we raise this, or save intructions elsewhere?
     uint8_t i;
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 30; i++) {
         if (c->pos + 1 > c->end) {
             return res->len;
         }
@@ -61,7 +64,7 @@ int parse_dname(struct dname *res, struct stats_key *stats_key, struct cursor *c
             break;
         }
 
-        //tld_offset = res->len;
+        tld_offset = res->len;
 
         if (c->pos + labellen + 1 > c->end) {
             return res->len;
@@ -70,44 +73,47 @@ int parse_dname(struct dname *res, struct stats_key *stats_key, struct cursor *c
         c->pos += labellen + 1;
     }
 
+    tld_offset += 1;
     // copy the dname in chunks of 64/32/16 etc bytes
 
     void* to= res->full;
     uint32_t dname_len = res->len;
 
-    //COPY_DNAME(cstart, to, dname_len, 128);
-    COPY_DNAME(cstart, to, dname_len, 64);
-    COPY_DNAME(cstart, to, dname_len, 32);
-    COPY_DNAME(cstart, to, dname_len, 16);
-    COPY_DNAME(cstart, to, dname_len, 8);
-    COPY_DNAME(cstart, to, dname_len, 4);
-    COPY_DNAME(cstart, to, dname_len, 2);
-    COPY_DNAME(cstart, to, dname_len, 1);
 
-    /*
+    void *dname_start = cstart;
+    //COPY_DNAME(dname_start, to, dname_len, 128);
+    COPY_DNAME(dname_start, to, dname_len, 64);
+    COPY_DNAME(dname_start, to, dname_len, 32);
+    COPY_DNAME(dname_start, to, dname_len, 16);
+    COPY_DNAME(dname_start, to, dname_len, 8);
+    COPY_DNAME(dname_start, to, dname_len, 4);
+    COPY_DNAME(dname_start, to, dname_len, 2);
+    COPY_DNAME(dname_start, to, dname_len, 1);
 
-       // FIXME fix offset here
 
     // now copy the .tld
     int tld_len = res->len - tld_offset;
-    //bpf_printk("tld_len: %i\n", tld_len); // XXX this one makes the loader go boo
+
+    void *tld_start = cstart + tld_offset;
+    void* dst= stats_key->tld;
 
     if (tld_len > 10) {
-        //bpf_skb_load_bytes(skb, offset - tld_len + 1, res->tld, 10);
-        memcpy(cstart + offset - tld_len + 1, res->tld, 10);
+        if (tld_start + 10 > c->end)
+            return XDP_PASS;
+        memcpy(dst, tld_start, 10);
     }
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 10)
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 9) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 8) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 7) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 6) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 5) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 4) 
-    COPY_TLDe(cstart, offset, stats_key->tld, tld_len, 3) 
-    
-    */
-    
-    bpf_printk("tld_len: %i\n", res->len);
+    COPY_TLDe(tld_start, dst, tld_len, 10)
+    COPY_TLDe(tld_start, dst, tld_len, 9)
+    COPY_TLDe(tld_start, dst, tld_len, 8)
+    COPY_TLDe(tld_start, dst, tld_len, 7)
+    COPY_TLDe(tld_start, dst, tld_len, 6)
+    COPY_TLDe(tld_start, dst, tld_len, 5)
+    COPY_TLDe(tld_start, dst, tld_len, 4)
+    COPY_TLDe(tld_start, dst, tld_len, 3)
+    COPY_TLDe(tld_start, dst, tld_len, 2)
+    COPY_TLDe(tld_start, dst, tld_len, 1)
+
+    //bpf_printk("stats_key->tld: %s", stats_key->tld);
     return res->len;
 }
 __always_inline 
@@ -130,7 +136,6 @@ int update_stats(
 
     parse_dname(&dname, &sk, c);
 
-    bpf_printk("dname: %s\n", dname.full);
     struct dns_qrr *qrr;
     if (!(qrr = parse_dns_qrr(c)))
         return XDP_PASS;
@@ -141,7 +146,7 @@ int update_stats(
     if (!(c->pos < c->end))
         return XDP_PASS; // no OPT record
     if (*(uint8_t *)c->pos != 0x00){
-        bpf_printk("expected name root (0x00), XDP_PASS");
+        //bpf_printk("expected name root (0x00), XDP_PASS");
         return XDP_PASS;
     }
 
@@ -154,8 +159,7 @@ int update_stats(
     }
 
 
-    if (__bpf_ntohl(opt->ttl) >> 15){ // & 0x1 ;
-        bpf_printk("setting do_bit to 1\n");
+    if (__bpf_ntohl(opt->ttl) >> 15) {
         sk.do_bit = 1;
     }
     uint16_t edns_size = __bpf_ntohs(opt->class);
