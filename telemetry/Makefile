@@ -4,13 +4,14 @@ LIBS=-lbpf -lelf -lz
 
 DEV=eno1
 
-CFLAGS=-O3 -Wall -Werror -I../libbpf/src -D'DEFAULT_IFACE="$(DEV)"' -D'DEBUG=1'
+# we need -g for the BTF definition of maps
+CFLAGS=-g -O3 -Wall -Werror -I../libbpf/src -D'DEFAULT_IFACE="$(DEV)"' -D'DEBUG=1'
 
-TC_PROG=telemetry.o
+XDP_PROG=telemetry.o
 
-all: $(TC_PROG) print_telemetry
+all: $(XDP_PROG) print_telemetry
 
-$(TC_PROG): telemetry.c telemetry.h bpf-dns.h #murmur3.c
+$(XDP_PROG): telemetry.c telemetry.h bpf-dns.h
 	$(CC) -target bpf $(CFLAGS) -c -o $@ $<
 
 print_telemetry: print_telemetry.c
@@ -20,10 +21,10 @@ print_influxdb: print_influxdb.c
 	$(CC) -static $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 clean: unmount
-	rm -f $(TC_PROG) print_telemetry
+	rm -f $(XDP_PROG) print_telemetry
 
-dump: $(TC_PROG)
-	llvm-objdump -S $(TC_PROG)
+dump: $(XDP_PROG)
+	llvm-objdump -S $(XDP_PROG)
 
 unmount:
 	sudo umount /sys/fs/bpf 2>/dev/null || true
@@ -33,22 +34,22 @@ sys_fs_bpf_mounted:
 	sudo mount -t bpf none /sys/fs/bpf
 	@touch sys_fs_bpf_mounted
 
-clsact:
-	sudo /sbin/tc qdisc add dev $(DEV) clsact
-	/usr/bin/touch clsact
+stats_map: 
+	sudo bpftool map create /sys/fs/bpf/stats flags 1 \
+		name stats type hash key 22 value 8 entries 100000
 
-tc_stats: $(TC_PROG)
-
-load: clsact $(TC_PROG) 
-	sudo /sbin/tc filter del dev $(DEV) egress || true
-	sudo /sbin/tc filter add dev $(DEV) egress bpf da obj $(TC_PROG) sec telemetry-egress
+load: $(XDP_PROG) stats_map
+	#sudo ip --force link set dev $(DEV) xdpgeneric obj $(XDP_PROG) sec xdp-telemetry-ingress
+	sudo bpftool prog load $(XDP_PROG) /sys/fs/bpf/telemetry_ingress type xdp \
+		map name stats \
+		pinned /sys/fs/bpf/stats
+	sudo ip --force link set dev $(DEV) xdpgeneric \
+		pinned /sys/fs/bpf/telemetry_ingress
 
 unload:
 	sudo ip link set dev $(DEV) xdpgeneric off
-	sudo /sbin/tc filter del dev $(DEV) egress || true
-	sudo /sbin/tc qdisc del dev $(DEV) clsact || true
-	rm -f clsact
+	sudo rm -f /sys/fs/bpf/telemetry_ingress
+	sudo rm -f /sys/fs/bpf/stats
 
 show:
 	sudo ip link show dev $(DEV)
-	/sbin/tc filter show dev $(DEV) egress

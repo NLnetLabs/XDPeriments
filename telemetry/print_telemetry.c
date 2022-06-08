@@ -6,10 +6,19 @@
 
 struct stats_key {
     uint8_t af;
-    uint8_t opcode;
-    uint8_t rcode;
-    uint8_t qtype;
-    uint16_t msgsize;
+    uint8_t qr_bit;
+    uint8_t do_bit;
+    uint8_t ad_bit;
+    uint8_t rrl_triggered;
+
+    uint8_t edns_size_leq1231;
+    uint8_t edns_size_1232;
+    uint8_t edns_size_leq1399;
+    uint8_t edns_size_1400;
+    uint8_t edns_size_leq1499;
+    uint8_t edns_size_1500;
+    uint8_t edns_size_gt1500;
+
     char tld[10];
 };
 
@@ -25,14 +34,30 @@ int print_stats(int map_fd)
 	while (!bpf_map_get_next_key(map_fd, prev_keyp, keyp)) {
 
 		bpf_map_lookup_elem(map_fd, &sk, &cnt);
-        printf("queries_total{af=%i, opcode=%i, rcode=%i, qtype=%i, msgsize=%i, tld=%s} %ld\n",
-                sk.af,
-                sk.opcode,
-                sk.rcode,
-                sk.qtype,
-                sk.msgsize,
-                sk.tld,
-                cnt);
+    char* edns_bin = "undefined";
+    if (sk.edns_size_leq1231 == 1) 
+        edns_bin = "leq1231";
+    else if (sk.edns_size_1232 == 1) 
+        edns_bin = "1232";
+    else if (sk.edns_size_leq1399 == 1) 
+        edns_bin = "leq1399";
+    else if (sk.edns_size_1400 == 1) 
+        edns_bin = "1400";
+    else if (sk.edns_size_leq1499 == 1) 
+        edns_bin = "leq1499";
+    else if (sk.edns_size_1500 == 1) 
+        edns_bin = "1500";
+    else if (sk.edns_size_gt1500 == 1) 
+        edns_bin = "gt1500";
+
+    printf("queries_total{af=%i, qr_bit=%i, do_bit=%i, ad_bit=%i, edns_bin=%s, tld=%s} %ld\n",
+            sk.af,
+            sk.qr_bit,
+            sk.do_bit,
+            sk.ad_bit,
+            edns_bin,
+            sk.tld,
+            cnt);
 
         //PRINT_STAT6("query_count", key6, qtype, A, value);
 		prev_keyp = keyp;
@@ -43,19 +68,17 @@ int print_stats(int map_fd)
 
 int main(int argc, char **argv)
 {
-	char *fn = "/sys/fs/bpf/tc/globals/stats";
+	char *fn = "/sys/fs/bpf/stats";
 	int map_fd;
-	struct bpf_map_info info;
+	struct bpf_map_info info = {}; // https://stackoverflow.com/questions/60654466/bpf-bpf-obj-get-info-by-fd-fails-with-invalid-argument
 	uint32_t info_len = sizeof(info);
 
     if ((map_fd = bpf_obj_get(fn)) < 0)
         fprintf(stderr, "Error opening \"%s\": %s\n"
                 , fn, strerror(errno));
-
     else if (bpf_obj_get_info_by_fd(map_fd, &info, &info_len))
         fprintf(stderr, "Cannot get info from \"%s\": %s\n"
                 , fn, strerror(errno));
-    else {
+    else 
         print_stats(map_fd);
-    }
 }
