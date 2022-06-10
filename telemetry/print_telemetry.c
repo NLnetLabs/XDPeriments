@@ -3,26 +3,7 @@
 #include <bpf.h>
 #include <libbpf.h>
 #include <errno.h>
-
-struct stats_key {
-    uint8_t af;
-    uint8_t qtype;
-    uint8_t qr_bit;
-    uint8_t do_bit;
-    uint8_t ad_bit;
-    uint8_t rrl_triggered;
-
-    uint8_t no_edns;
-    uint8_t edns_size_leq1231;
-    uint8_t edns_size_1232;
-    uint8_t edns_size_leq1399;
-    uint8_t edns_size_1400;
-    uint8_t edns_size_leq1499;
-    uint8_t edns_size_1500;
-    uint8_t edns_size_gt1500;
-
-    char tld[10];
-};
+#include "stats_key.h"
 
 int print_stats(int map_fd)
 {
