@@ -36,7 +36,7 @@ sys_fs_bpf_mounted:
 
 stats_map: 
 	sudo bpftool map create /sys/fs/bpf/stats flags 1 \
-		name stats type hash key 22 value 8 entries 100000
+		name stats type hash key 24 value 8 entries 100000
 
 load: $(XDP_PROG) stats_map
 	#sudo ip --force link set dev $(DEV) xdpgeneric obj $(XDP_PROG) sec xdp-telemetry-ingress

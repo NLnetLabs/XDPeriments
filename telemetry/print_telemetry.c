@@ -6,11 +6,13 @@
 
 struct stats_key {
     uint8_t af;
+    uint8_t qtype;
     uint8_t qr_bit;
     uint8_t do_bit;
     uint8_t ad_bit;
     uint8_t rrl_triggered;
 
+    uint8_t no_edns;
     uint8_t edns_size_leq1231;
     uint8_t edns_size_1232;
     uint8_t edns_size_leq1399;
@@ -35,7 +37,9 @@ int print_stats(int map_fd)
 
 		bpf_map_lookup_elem(map_fd, &sk, &cnt);
     char* edns_bin = "undefined";
-    if (sk.edns_size_leq1231 == 1) 
+    if (sk.no_edns == 1)
+        edns_bin = "no_edns";
+    else if (sk.edns_size_leq1231 == 1) 
         edns_bin = "leq1231";
     else if (sk.edns_size_1232 == 1) 
         edns_bin = "1232";
@@ -50,8 +54,9 @@ int print_stats(int map_fd)
     else if (sk.edns_size_gt1500 == 1) 
         edns_bin = "gt1500";
 
-    printf("queries_total{af=%i, qr_bit=%i, do_bit=%i, ad_bit=%i, edns_bin=%s, tld=%s} %ld\n",
+    printf("queries_total{af=%i, qtype=%i, qr_bit=%i, do_bit=%i, ad_bit=%i, edns_bin=%s, tld=%s} %ld\n",
             sk.af,
+            sk.qtype,
             sk.qr_bit,
             sk.do_bit,
             sk.ad_bit,
