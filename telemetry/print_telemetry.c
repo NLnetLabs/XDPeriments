@@ -45,7 +45,6 @@ int print_stats(int map_fd)
             sk.tld,
             cnt);
 
-        //PRINT_STAT6("query_count", key6, qtype, A, value);
 		prev_keyp = keyp;
 	}
 
