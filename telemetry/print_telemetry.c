@@ -35,7 +35,7 @@ int print_stats(int map_fd)
     else if (sk.edns_size_gt1500 == 1) 
         edns_bin = "gt1500";
 
-    printf("queries_total{af=%i, qtype=%i, qr_bit=%i, do_bit=%i, ad_bit=%i, edns_bin=%s, tld=%s} %ld\n",
+    printf("queries_total{af=\"%i\", qtype=\"%i\", qr_bit=\"%i\", do_bit=\"%i\", ad_bit=\"%i\", edns_bin=\"%s\", tld=\"%s\"} %ld\n",
             sk.af,
             sk.qtype,
             sk.qr_bit,
