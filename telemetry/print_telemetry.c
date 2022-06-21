@@ -36,7 +36,8 @@ int print_stats(int map_fd)
         edns_bin = "gt1500";
 
     printf("queries_total{af=\"%i\", qtype=\"%i\", qr_bit=\"%i\", "
-            "do_bit=\"%i\", ad_bit=\"%i\", edns_bin=\"%s\", tld=\"%s\"} %ld\n",
+            "do_bit=\"%i\", ad_bit=\"%i\", edns_bin=\"%s\", "
+            "tld=\"%s\"} %ld\n",
             sk.af,
             sk.qtype,
             sk.qr_bit,
