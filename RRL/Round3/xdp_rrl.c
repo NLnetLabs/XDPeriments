@@ -41,6 +41,9 @@
  */
 
 
+/* #define COMPILE_FOR_OLD_LIBBPF */
+/* uncomment the above to compile for old versions of libbpf */
+
 
 #include <linux/bpf.h>
 #include <linux/if_ether.h> /* for struct ethhdr   */
@@ -233,6 +236,19 @@ typedef __u64 uint64_t;
 #define RRL_MASK126          RRL_MASK30
 #define RRL_MASK127          RRL_MASK31
 
+#ifndef __section
+# define __section(NAME) __attribute__((section(NAME), used))
+#endif
+#ifndef __uint
+# define __uint(name, val) int(*(name))[val]
+#endif
+#ifndef __type
+#define __type(name, val) typeof(val) *(name)
+#endif
+
+
+#ifdef COMPILE_FOR_OLD_LIBBPF
+
 struct bpf_map_def SEC("maps") exclude_v4_prefixes = {
 	.type = BPF_MAP_TYPE_LPM_TRIE,
 	.key_size = sizeof(struct bpf_lpm_trie_key) + sizeof(uint32_t),
@@ -247,8 +263,36 @@ struct bpf_map_def SEC("maps") exclude_v6_prefixes = {
 	.max_entries = 10000
 };
 
-#if RRL_RATELIMIT == 0
+#else /* #ifdef COMPILE_FOR_OLD_LIBBPF */
+
+struct ipv4_key {
+	struct   bpf_lpm_trie_key lpm_key;
+	uint32_t ipv4;
+} __attribute__((packed));
+
+struct {
+	__uint(type,  BPF_MAP_TYPE_LPM_TRIE);
+	__type(key,   struct ipv4_key);
+	__type(value, uint64_t);
+	__uint(max_entries, 10000);
+} exclude_v4_prefixes __section(".maps");
+
+struct ipv6_key {
+	struct   bpf_lpm_trie_key lpm_key;
+	uint64_t ipv6;
+} __attribute__((packed));
+
+struct {
+	__uint(type,  BPF_MAP_TYPE_LPM_TRIE);
+	__type(key,   struct ipv6_key);
+	__type(value, uint64_t);
+	__uint(max_entries, 10000);
+} exclude_v6_prefixes __section(".maps");
+
+#endif /* #else #ifdef COMPILE_FOR_OLD_LIBBPF */
+
 SEC("xdp-rrl")
+#if RRL_RATELIMIT == 0
 int xdp_rrl(struct xdp_md *ctx)
 {
 	(void)ctx;
@@ -264,6 +308,7 @@ struct bucket {
 	uint64_t n_packets;
 };
 
+#ifdef COMPILE_FOR_OLD_LIBBPF
 struct bpf_map_def SEC("maps") state_map = {
 	.type = BPF_MAP_TYPE_PERCPU_HASH,
 	.key_size = sizeof(uint32_t),
@@ -277,7 +322,21 @@ struct bpf_map_def SEC("maps") state_map_v6 = {
 	.value_size = sizeof(struct bucket),
 	.max_entries = RRL_SIZE
 };
+#else /* #ifdef COMPILE_FOR_OLD_LIBBPF */
+struct {
+	__uint(type,  BPF_MAP_TYPE_PERCPU_HASH);
+	__type(key,   uint32_t);
+	__type(value, struct bucket);
+	__uint(max_entries, RRL_SIZE);
+} state_map __section(".maps");
 
+struct {
+	__uint(type,  BPF_MAP_TYPE_PERCPU_HASH);
+	__type(key,   sizeof(struct in6_addr));
+	__type(value, struct bucket);
+	__uint(max_entries, RRL_SIZE);
+} state_map_v6 __section(".maps");
+#endif /* #else #ifdef COMPILE_FOR_OLD_LIBBPF */
 
 /** Copied from the kernel module of the base03-map-counter example of the
  ** XDP Hands-On Tutorial (see https://github.com/xdp-project/xdp-tutorial )

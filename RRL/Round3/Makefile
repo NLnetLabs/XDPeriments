@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-O2 -Wall -Werror -I ../../libbpf/src
+CFLAGS=-g -O2 -Wall -Werror -I ../../libbpf/src
 
 DEV=eth0
 
